@@ -27,7 +27,7 @@ worlds/character_studio/
     autosaves/                     Workspace recovery data
 ```
 
-The world catalog stores relative paths for each world's manifest, data, assets and outputs. A world can be loaded only when its catalog paths exist. The browser paginates the full catalog; Create World creates a separate world folder and copies the bootstrap engine/material/component configuration.
+The world catalog stores relative paths for each world's manifest, data, assets and outputs. A world can be loaded only when its catalog paths exist. The browser paginates the full catalog; Create World creates a separate world folder and copies the bootstrap engine/material/component configuration. Catalog updates are staged in the `worlds/` directory; the last valid generation is retained as `catalog.json.prev` so startup can recover when the primary catalog is missing or invalid.
 
 ## Main menu
 
