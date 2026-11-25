@@ -1,92 +1,90 @@
 # Physics Sandbox
 
-A data-driven, physics-first 3D sandbox foundation built with Rust, Bevy, and Avian.
+A data-driven, physics-first 3D sandbox and character-authoring foundation built with Rust, Bevy, and Avian.
 
-The executable contains reusable engine systems. Game content is loaded from external folders:
+## Project layout
+
+The executable contains reusable systems. World-specific content stays external:
 
 ```text
 physics_sandbox.exe
-data/       Engine settings, materials, and reusable component definitions
-assets/     glTF scenes, textures, audio, and other streamed assets
-mods/       Reserved for modular content extensions
-worlds/     World compositions and per-world persistent state
+data/                              Shared bootstrap definitions
+assets/                            Shared project assets
+mods/                              Reserved; runtime mod loading is not implemented
+worlds/catalog.json                Loadable-world registry
+worlds/sandbox/
+  world.json                       Physics Sandbox manifest
+  outputs/                         World-owned output location
+worlds/character_studio/
+  world.json                       Character Studio scene manifest
+  assets/                          Studio-only models, textures, materials, references
+  data/                             Studio-only engine, physical, editor, species and action data
+  outputs/
+    species/                       Reusable species-base definitions
+    models/                        Exported model files
+    actions/                       Action JSON
+    previews/                      Preview renders
+    autosaves/                     Workspace recovery data
 ```
 
-## Foundation architecture
+The world catalog stores relative paths for each world's manifest, data, assets and outputs. A world can be loaded only when its catalog paths exist. The browser paginates the full catalog; Create World creates a separate world folder and copies the bootstrap engine/material/component configuration.
 
-- **Definitions:** `data/components.json` describes reusable physical components.
-- **Instances:** `worlds/<world>/world.json` places component definitions into a world using unique instance IDs and poses.
-- **Materials:** `data/materials.json` defines intrinsic density and initial per-material friction/restitution coefficients.
-- **Visual assets:** `assets/` contains models, textures, audio, and effects referenced by definitions.
-- **Runtime state:** `worlds/<world>/state.json` stores saved dynamic-instance transforms and velocities, separate from authored world composition. Static transforms remain manifest-owned; unresolved IDs are retained for later content recovery.
+## Main menu
 
-This is the first definition/instance boundary. Nested assemblies, dependency-resolved content packages, hot reload, regional streaming, and runtime mod loading are intentionally future subsystems rather than partially implemented placeholders.
+The main menu and world browser use a procedural water surface with travelling waves and radial ripples. Pointer motion, clicks and periodic random impulses add ripples. Raised 3D text callouts have black offset geometry, white foreground text, stems, hover scaling and click actions. Worlds is active; Mods and Settings are intentionally present but inactive.
 
-## Current foundation
+The water is currently a procedurally displaced mesh shaded by a PBR material and the project's directional light. This is an initial visual implementation, not yet a physically based ocean renderer: environment-cubemap reflections, refraction, screen-space reflections, caustics and a dedicated water shader are not implemented.
+
+## Physics foundation
 
 - Bevy 0.20.1 with Avian 0.8.0.
-- SI-style world scale: one world unit is one metre, velocities are metres/second, gravity is metres/second², and material density is kg/m³.
-- Fixed 120 Hz physics schedule with eight solver substeps.
-- Static and dynamic rigid bodies with shape-derived mass properties, data-defined density, static/dynamic friction, restitution, and optional per-definition swept-CCD overrides.
-- Cuboid, sphere, and capsule colliders. Primitive render meshes are generated from the same dimensions used by the colliders.
-- Reusable mesh and primitive-material handles are shared for identical definitions in the loaded world.
-- Avian collision-start/end counters plus an active-pair set synchronized from Avian's current touching-contact data.
-- Optional glTF scene visuals loaded through Bevy's AssetServer. Imported scenes preserve their glTF-authored materials; primitive surface settings apply to engine-generated primitive visuals.
-- Non-physical free-fly camera: W/A/S/D, Space/Ctrl, Shift, and mouse look.
-- F5 saves runtime transforms and linear/angular velocities for dynamic instances only. Static transforms remain authored in the world manifest. Unresolved saved IDs are warned about and retained across saves so temporarily unavailable content can recover its state.
-- Save loading validates and normalizes quaternions and attempts backup recovery when the primary save is invalid.
-- No AI, character, gameplay UI, or scenario-specific engine code.
+- SI-style scale: one world unit is one metre; velocity is metres/second; gravity is metres/second²; density is kg/m³.
+- Fixed-step physics and solver substeps are loaded from the active world's engine configuration.
+- Static and dynamic rigid bodies with cuboid, sphere and capsule colliders.
+- Material definitions include density, static/dynamic friction, restitution, and linear/angular damping.
+- The solver has a configurable low-speed restitution threshold. The rubber material uses reduced restitution and damping to avoid sustained low-speed bouncing.
+- Directional-light orientation, illuminance and shadows update from the active world's configuration.
+- F5 saves transforms and velocities for dynamic instances only. Static transforms remain manifest-owned; unresolved saved IDs are retained.
 
-## Run
+The free-fly editor camera is non-physical. It is not a character controller.
 
-Install a Rust toolchain supported by Bevy 0.20 and the operating-system dependencies required by Bevy, then:
+## Character Studio
+
+Character Studio is a separate catalog world. Its `assets/`, `data/` and `outputs/` are world-local, so adding another editor world does not require mixing that world's textures, model files, species definitions or actions with this one.
+
+A **species** is a reusable base definition (the checked-in example is `human`), not an individual character. The species record links to a rig and action sets. Runtime individuals are intended to be instances derived from a species.
+
+The sample rig defines articulated rigid-body segments and joints. It explicitly does not use rotation locks or translation locks. The action JSON describes:
+- input triggers such as a held key;
+- conditions such as foot/surface contact and joint-angle thresholds;
+- collision-triggered reflexes;
+- joint torque and bounded joint-angular-velocity actuators.
+
+The execution contract disables impulse jumps, root teleportation, rotation locks and external-object push movement. The action schema is data only at this stage: the runtime evaluator that turns triggers into joint motor forces is not implemented yet. Soft-body runtime support is also not implemented.
+
+The external editor tool registry records the planned breadth of the studio (mesh edit, sculpt, surface/topology, PBR materials, rigging, animation, physics actions and export). Entries marked `specification_only` are design contracts—not working operators. A human GLB has not been authored yet; `outputs/models/human.glb` is the intended export target, not an existing asset.
+
+## Run and controls
+
+Install a Rust toolchain supported by Bevy 0.20 and the platform dependencies required by Bevy:
 
 ```powershell
 cargo run --locked
 ```
 
-Select another manifest:
+The menu opens first. Choose Worlds and select a catalog entry. In a loaded world:
+- W / A / S / D: free-fly camera movement
+- Space / Left Ctrl: camera up/down
+- Left Shift: sprint
+- Mouse: look
+- F5: save the active world's dynamic body state
+- Escape: return to the main menu
 
-```powershell
-cargo run -- --world worlds/lab/world.json
-```
+## Authoring and validation
 
-Override portable roots when needed:
+Shared bootstrap data remains in `data/`. Per-world configuration is in `worlds/<world>/data/`; manifests are `worlds/<world>/world.json`; per-world assets are in `worlds/<world>/assets/`; and generated content belongs in `worlds/<world>/outputs/`.
 
-```powershell
-cargo run -- --root . --data data --assets assets --world worlds/sandbox/world.json
-```
-
-The executable resolves its portable root from the directory beside the executable when that directory contains `data/`; development runs fall back to the current working directory.
-
-## Controls
-
-| Input | Action |
-| --- | --- |
-| W / A / S / D | Fly forward / left / backward / right |
-| Space / Left Ctrl | Fly up / down |
-| Left Shift | Sprint |
-| Mouse | Look |
-| F5 | Save current rigid-body state |
-
-The camera is intentionally a non-physical editor/spectator camera; it is not a character controller and does not participate in collisions.
-
-## Authoring content
-
-- `data/engine.json`: versioned engine-level physics, camera, and lighting defaults.
-- `data/materials.json`: versioned physical material catalogue. Density is kg/m³; friction coefficients are dimensionless.
-- `data/components.json`: versioned reusable component definitions containing body type, collider, material reference, optional CCD filter/mode/threshold override, and visual reference.
-- `worlds/<world>/world.json`: versioned world composition. Each object has a unique instance ID, a component-definition reference, and an SI transform.
-- `assets/`: paths referenced by `visual.model` are relative to this directory. glTF scene selectors such as `models/part.glb#Scene0` are supported by the AssetServer.
-- `worlds/<world>/state.json`: generated runtime state; it is not committed by default.
-
-For a cuboid, `half_extents` describe the collision half-size in metres. The generated render mesh uses twice those values for its full dimensions. For imported models, the asset's authored origin and scale must agree with the collider definition; imported glTF materials are preserved. A future material-override pipeline will make model-level overrides data-configurable.
-
-Current visual alpha modes are explicit: `opaque` requires alpha 1.0, while `blend` uses the authored alpha channel. Transparent materials can have different sorting and depth behavior from opaque materials.
-
-The current friction values are approximations. Avian combines collider coefficients according to its configured combine rule; the foundation has not yet introduced a pairwise material-interaction registry. Fast-moving dynamic bodies use Avian's automatic swept-CCD behavior against static and kinematic targets when no override is authored. An optional `swept_ccd` component definition can override the target filter, sweep mode, and threshold. This is an intentional next physics-model extension, not a claim that friction is a universal material constant.
-
-## Validation
+Validation commands:
 
 ```powershell
 cargo fmt --all -- --check
@@ -95,12 +93,4 @@ cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-The committed `Cargo.lock` fixes the dependency graph for repeatable application builds. Keep it in source control and update it deliberately when dependencies change.
-
-A Windows portable release can be assembled with:
-
-```powershell
-./scripts/package.ps1
-```
-
-The package script verifies Cargo's exit code and the executable before copying the portable directory layout. Mods remain a reserved directory in this foundation; runtime discovery and loading are later work.
+A Windows portable release can be assembled with `./scripts/package.ps1`. The CI workflow packages and uploads `physics_sandbox-windows-x86_64.zip` as a workflow artifact.

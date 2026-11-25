@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail, ensure};
 use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::{
     EditorScreen, MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE,
@@ -64,51 +65,372 @@ pub struct ActiveWorld {
     pub outputs_dir: Option<PathBuf>,
 }
 
-#[derive(Resource, Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Resource, Clone, Debug, Default)]
 pub struct CharacterStudioWorkspace {
     pub schema_version: u32,
     pub display_name: String,
     pub units: String,
     pub species_index: String,
     pub actions_index: String,
-    pub tool_catalog: String,
+    pub tool_catalog_path: String,
     pub output_directories: Vec<String>,
+    pub species: Vec<Value>,
+    pub action_sets: Vec<Value>,
+    pub tool_catalog: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceFile {
+    schema_version: u32,
+    id: String,
+    display_name: String,
+    units: String,
+    species_index: String,
+    actions_index: String,
+    tool_catalog: String,
+    output_directories: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeciesIndexFile {
+    schema_version: u32,
+    species: Vec<SpeciesIndexEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeciesIndexEntry {
+    id: String,
+    name: String,
+    file: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActionIndexFile {
+    schema_version: u32,
+    action_sets: Vec<ActionIndexEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActionIndexEntry {
+    id: String,
+    species: String,
+    file: String,
 }
 
 impl CharacterStudioWorkspace {
-    fn load(data_dir: &Path) -> Result<Self> {
-        let path = data_dir.join("editor/workspace.json");
-        let contents = fs::read_to_string(&path)
-            .with_context(|| format!("could not read studio workspace '{}'", path.display()))?;
-        let workspace: Self = serde_json::from_str(&contents)
-            .with_context(|| format!("invalid studio workspace '{}'", path.display()))?;
+    fn load(project_root: &Path, data_dir: &Path) -> Result<Self> {
+        let workspace_path = data_dir.join("editor/workspace.json");
+        let workspace: WorkspaceFile = read_json(&workspace_path)?;
         ensure!(
             workspace.schema_version == 1,
             "unsupported character studio workspace schema {}",
             workspace.schema_version
         );
         ensure!(
+            !workspace.id.trim().is_empty(),
+            "character studio workspace id cannot be empty"
+        );
+        ensure!(
             !workspace.display_name.trim().is_empty(),
             "character studio workspace display_name cannot be empty"
         );
+        ensure!(
+            !workspace.units.trim().is_empty(),
+            "character studio workspace units cannot be empty"
+        );
 
-        for relative in [
-            &workspace.species_index,
-            &workspace.actions_index,
-            &workspace.tool_catalog,
-        ] {
-            let resolved = safe_project_path(data_dir, relative)?;
+        let species_index_path = safe_project_path(data_dir, &workspace.species_index)?;
+        let actions_index_path = safe_project_path(data_dir, &workspace.actions_index)?;
+        let tool_catalog_path = safe_project_path(data_dir, &workspace.tool_catalog)?;
+        let species_index: SpeciesIndexFile = read_json(&species_index_path)?;
+        let actions_index: ActionIndexFile = read_json(&actions_index_path)?;
+        ensure!(
+            species_index.schema_version == 1,
+            "unsupported species index schema in '{}'",
+            species_index_path.display()
+        );
+        ensure!(
+            actions_index.schema_version == 1,
+            "unsupported action index schema in '{}'",
+            actions_index_path.display()
+        );
+
+        let tool_catalog: Value = read_json(&tool_catalog_path)?;
+        ensure!(
+            tool_catalog.get("schema_version").and_then(Value::as_u64) == Some(1),
+            "unsupported editor tool catalog schema in '{}'",
+            tool_catalog_path.display()
+        );
+
+        let mut species_ids = HashSet::new();
+        let mut species_documents = Vec::with_capacity(species_index.species.len());
+        let mut rig_ids = HashMap::<String, (HashSet<String>, HashSet<String>)>::new();
+
+        for reference in &species_index.species {
             ensure!(
-                resolved.is_file(),
-                "character studio workspace reference '{}' does not exist",
-                resolved.display()
+                !reference.id.trim().is_empty(),
+                "species index contains an empty id"
             );
+            ensure!(
+                species_ids.insert(reference.id.as_str()),
+                "species index contains duplicate id '{}'",
+                reference.id
+            );
+            ensure!(
+                !reference.name.trim().is_empty(),
+                "species '{}' has an empty display name",
+                reference.id
+            );
+
+            let species_path = safe_project_path(project_root, &reference.file)?;
+            let species: Value = read_json(&species_path)?;
+            validate_document_id(&species, &reference.id, &species_path)?;
+
+            let rig_reference = species
+                .get("rig")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("species '{}' is missing its rig path", reference.id))?;
+            let rig_path = safe_project_path(project_root, rig_reference)?;
+            let rig: Value = read_json(&rig_path)?;
+            ensure!(
+                rig.get("schema_version").and_then(Value::as_u64) == Some(1),
+                "unsupported rig schema in '{}'",
+                rig_path.display()
+            );
+            ensure!(
+                rig.get("species").and_then(Value::as_str) == Some(reference.id.as_str()),
+                "rig '{}' does not belong to species '{}'",
+                rig_path.display(),
+                reference.id
+            );
+
+            let segment_ids = collect_ids(&rig, "segments", &rig_path)?;
+            let joint_ids = collect_ids(&rig, "joints", &rig_path)?;
+            rig_ids.insert(reference.id.clone(), (segment_ids, joint_ids));
+            species_documents.push(species);
         }
-        Ok(workspace)
+
+        let mut action_set_ids = HashSet::new();
+        let mut action_documents = Vec::with_capacity(actions_index.action_sets.len());
+        for reference in &actions_index.action_sets {
+            ensure!(
+                action_set_ids.insert(reference.id.as_str()),
+                "action index contains duplicate id '{}'",
+                reference.id
+            );
+            ensure!(
+                species_ids.contains(reference.species.as_str()),
+                "action set '{}' references unknown species '{}'",
+                reference.id,
+                reference.species
+            );
+
+            let action_path = safe_project_path(project_root, &reference.file)?;
+            let action_set: Value = read_json(&action_path)?;
+            validate_document_id(&action_set, &reference.id, &action_path)?;
+            ensure!(
+                action_set.get("species").and_then(Value::as_str)
+                    == Some(reference.species.as_str()),
+                "action set '{}' species does not match its index entry",
+                reference.id
+            );
+            let (segments, joints) = rig_ids
+                .get(&reference.species)
+                .expect("species index and rig ids were loaded together");
+            validate_action_set(&action_set, segments, joints, &action_path)?;
+            action_documents.push(action_set);
+        }
+
+        for relative in &workspace.output_directories {
+            validate_relative_path(relative)?;
+        }
+
+        Ok(Self {
+            schema_version: workspace.schema_version,
+            display_name: workspace.display_name,
+            units: workspace.units,
+            species_index: workspace.species_index,
+            actions_index: workspace.actions_index,
+            tool_catalog_path: workspace.tool_catalog,
+            output_directories: workspace.output_directories,
+            species: species_documents,
+            action_sets: action_documents,
+            tool_catalog,
+        })
     }
 }
 
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("could not read data file '{}'", path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("invalid JSON data file '{}'", path.display()))
+}
+
+fn validate_document_id(document: &Value, expected: &str, path: &Path) -> Result<()> {
+    ensure!(
+        document.get("schema_version").and_then(Value::as_u64) == Some(1),
+        "unsupported schema in '{}'",
+        path.display()
+    );
+    ensure!(
+        document.get("id").and_then(Value::as_str) == Some(expected),
+        "document '{}' does not declare expected id '{}'",
+        path.display(),
+        expected
+    );
+    Ok(())
+}
+
+fn collect_ids(document: &Value, key: &str, path: &Path) -> Result<HashSet<String>> {
+    let entries = document
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("rig '{}' has no '{key}' array", path.display()))?;
+    let mut ids = HashSet::new();
+    for entry in entries {
+        let id = entry.get("id").and_then(Value::as_str).ok_or_else(|| {
+            anyhow::anyhow!("rig '{}' has a '{key}' entry without an id", path.display())
+        })?;
+        ensure!(
+            !id.trim().is_empty(),
+            "rig '{}' has an empty {key} id",
+            path.display()
+        );
+        ensure!(
+            ids.insert(id.to_owned()),
+            "rig '{}' has duplicate {key} id '{id}'",
+            path.display()
+        );
+    }
+    Ok(ids)
+}
+
+fn validate_action_set(
+    action_set: &Value,
+    segments: &HashSet<String>,
+    joints: &HashSet<String>,
+    path: &Path,
+) -> Result<()> {
+    let actions = action_set
+        .get("actions")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("action set '{}' has no actions array", path.display()))?;
+    let mut action_ids = HashSet::new();
+
+    for action in actions {
+        let id = action
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("action set '{}' contains an action without an id", path.display()))?;
+        ensure!(
+            action_ids.insert(id),
+            "action set '{}' contains duplicate action id '{id}'",
+            path.display()
+        );
+
+        for key in ["triggers", "conditions"] {
+            if let Some(entries) = action.get(key).and_then(Value::as_array) {
+                for entry in entries {
+                    let kind = entry.get("kind").and_then(Value::as_str).unwrap_or_default();
+                    match kind {
+                        "collision" => validate_reference(entry, "segment", segments, "segment", path)?,
+                        "surface_contact" => {
+                            let segment_list = entry
+                                .get("segments")
+                                .and_then(Value::as_array)
+                                .ok_or_else(|| anyhow::anyhow!("surface contact in '{}' has no segments", path.display()))?;
+                            for segment in segment_list {
+                                let segment_id = segment.as_str().ok_or_else(|| {
+                                    anyhow::anyhow!("surface contact in '{}' has a non-string segment id", path.display())
+                                })?;
+                                ensure!(
+                                    segments.contains(segment_id),
+                                    "surface contact in '{}' references unknown segment '{segment_id}'",
+                                    path.display()
+                                );
+                            }
+                        }
+                        "joint_angle_threshold" => validate_reference(entry, "joint", joints, "joint", path)?,
+                        "key_held" => ensure!(
+                            entry.get("key").and_then(Value::as_str).is_some(),
+                            "key trigger in '{}' has no key",
+                            path.display()
+                        ),
+                        _ => bail!(
+                            "unsupported action trigger or condition kind '{kind}' in '{}'",
+                            path.display()
+                        ),
+                    }
+                }
+            }
+        }
+
+        let actuators = action
+            .get("actuators")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("action '{id}' in '{}' has no actuators array", path.display()))?;
+        for actuator in actuators {
+            validate_reference(actuator, "joint", joints, "actuator joint", path)?;
+            let kind = actuator.get("kind").and_then(Value::as_str).unwrap_or_default();
+            ensure!(
+                matches!(kind, "joint_torque" | "joint_angular_velocity_target"),
+                "unsupported actuator kind '{kind}' in '{}'",
+                path.display()
+            );
+            let torque_limit = actuator
+                .get("torque_limit_nm")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| anyhow::anyhow!("actuator in '{}' has no numeric torque limit", path.display()))?;
+            ensure!(
+                torque_limit.is_finite() && torque_limit > 0.0,
+                "actuator torque limit in '{}' must be finite and positive",
+                path.display()
+            );
+        }
+    }
+
+    let policy = action_set
+        .get("execution_policy")
+        .ok_or_else(|| anyhow::anyhow!("action set '{}' has no execution policy", path.display()))?;
+    for flag in [
+        "allow_impulses",
+        "allow_root_teleport",
+        "allow_rotation_locks",
+        "allow_external_object_push",
+    ] {
+        ensure!(
+            policy.get(flag).and_then(Value::as_bool) == Some(false),
+            "action set '{}' must explicitly disable '{flag}'",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_reference(
+    document: &Value,
+    key: &str,
+    valid_ids: &HashSet<String>,
+    label: &str,
+    path: &Path,
+) -> Result<()> {
+    let id = document
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("{label} reference in '{}' is missing '{key}'", path.display()))?;
+    ensure!(
+        valid_ids.contains(id),
+        "unknown {label} '{id}' referenced in '{}'",
+        path.display()
+    );
+    Ok(())
+}
 pub(super) fn load_world_catalog(
     root: Res<EditorProjectRoot>,
     mut catalog: ResMut<WorldCatalog>,
@@ -299,14 +621,26 @@ fn open_world(
         WorldStateFile::load_or_default(&loaded.paths.world_state, &loaded.world.id)?;
 
     if matches!(entry.kind, WorldKind::CharacterStudio) {
-        *studio_workspace = CharacterStudioWorkspace::load(&loaded.paths.data_dir)?;
+        *studio_workspace =
+            CharacterStudioWorkspace::load(&loaded.paths.root_dir, &loaded.paths.data_dir)?;
         info!(
             "Loaded workspace '{}' ({}) with species index '{}', action index '{}', and tool catalog '{}'",
             studio_workspace.display_name,
             studio_workspace.units,
             studio_workspace.species_index,
             studio_workspace.actions_index,
-            studio_workspace.tool_catalog
+            studio_workspace.tool_catalog_path
+        );
+        info!(
+            "Studio loaded {} species, {} action sets, {} tool groups, schema {}",
+            studio_workspace.species.len(),
+            studio_workspace.action_sets.len(),
+            studio_workspace
+                .tool_catalog
+                .get("tool_groups")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+            studio_workspace.schema_version
         );
         for directory in &studio_workspace.output_directories {
             let output = safe_project_path(&outputs_dir, directory)?;
@@ -445,4 +779,49 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     fs::rename(&temp, path)
         .with_context(|| format!("could not commit JSON '{}'", path.display()))?;
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{CharacterStudioWorkspace, read_catalog, validate_relative_path};
+
+    #[test]
+    fn checked_in_character_studio_data_cross_references_load() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let data_dir = root.join("worlds/character_studio/data");
+        let workspace = CharacterStudioWorkspace::load(root, &data_dir)
+            .expect("species, rig, and action references should resolve");
+
+        assert_eq!(workspace.display_name, "Character Studio");
+        assert_eq!(workspace.species.len(), 1);
+        assert_eq!(workspace.action_sets.len(), 1);
+        assert!(
+            workspace
+                .tool_catalog
+                .get("tool_groups")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|groups| groups.len() >= 7)
+        );
+    }
+
+    #[test]
+    fn world_catalog_paths_are_relative_and_contained() {
+        assert!(validate_relative_path("worlds/character_studio/world.json").is_ok());
+        assert!(validate_relative_path("../outside/world.json").is_err());
+        assert!(validate_relative_path("/absolute/world.json").is_err());
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let catalog = read_catalog(&root.join("worlds/catalog.json"))
+            .expect("checked-in world catalog should parse");
+        assert!(catalog.worlds.iter().any(|world| world.id == "sandbox"));
+        assert!(
+            catalog
+                .worlds
+                .iter()
+                .any(|world| world.id == "character_studio")
+        );
+    }
 }

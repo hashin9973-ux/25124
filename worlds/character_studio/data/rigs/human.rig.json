@@ -10,12 +10,12 @@
       "shape": "capsule",
       "radius_m": 0.14,
       "length_m": 0.24,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         0,
         0.95,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "abdomen",
@@ -23,12 +23,12 @@
       "shape": "capsule",
       "radius_m": 0.13,
       "length_m": 0.24,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         0,
-        1.22,
+        0.27,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "chest",
@@ -36,24 +36,24 @@
       "shape": "capsule",
       "radius_m": 0.2,
       "length_m": 0.38,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         0,
-        1.56,
+        0.34,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "head",
       "parent": "chest",
       "shape": "sphere",
       "radius_m": 0.115,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         0,
-        1.99,
+        0.43,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "upper_arm_l",
@@ -61,12 +61,12 @@
       "shape": "capsule",
       "radius_m": 0.07,
       "length_m": 0.28,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         -0.29,
-        1.63,
+        0.07,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "lower_arm_l",
@@ -74,12 +74,12 @@
       "shape": "capsule",
       "radius_m": 0.055,
       "length_m": 0.26,
-      "center_m": [
-        -0.52,
-        1.39,
+      "material": "soft_tissue",
+      "local_center_m": [
+        -0.23,
+        -0.24,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "hand_l",
@@ -87,12 +87,12 @@
       "shape": "capsule",
       "radius_m": 0.045,
       "length_m": 0.12,
-      "center_m": [
-        -0.62,
-        1.18,
+      "material": "soft_tissue",
+      "local_center_m": [
+        -0.1,
+        -0.21,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "upper_arm_r",
@@ -100,12 +100,12 @@
       "shape": "capsule",
       "radius_m": 0.07,
       "length_m": 0.28,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         0.29,
-        1.63,
+        0.07,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "lower_arm_r",
@@ -113,12 +113,12 @@
       "shape": "capsule",
       "radius_m": 0.055,
       "length_m": 0.26,
-      "center_m": [
-        0.52,
-        1.39,
+      "material": "soft_tissue",
+      "local_center_m": [
+        0.23,
+        -0.24,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "hand_r",
@@ -126,12 +126,12 @@
       "shape": "capsule",
       "radius_m": 0.045,
       "length_m": 0.12,
-      "center_m": [
-        0.62,
-        1.18,
+      "material": "soft_tissue",
+      "local_center_m": [
+        0.1,
+        -0.21,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "thigh_l",
@@ -139,12 +139,12 @@
       "shape": "capsule",
       "radius_m": 0.09,
       "length_m": 0.42,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         -0.12,
-        0.58,
+        -0.37,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "shin_l",
@@ -152,12 +152,12 @@
       "shape": "capsule",
       "radius_m": 0.065,
       "length_m": 0.4,
-      "center_m": [
-        -0.12,
-        0.13,
+      "material": "soft_tissue",
+      "local_center_m": [
+        0,
+        -0.45,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "foot_l",
@@ -168,12 +168,12 @@
         0.055,
         0.16
       ],
-      "center_m": [
-        -0.12,
-        0.035,
+      "material": "soft_tissue",
+      "local_center_m": [
+        0,
+        -0.095,
         0.09
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "thigh_r",
@@ -181,12 +181,12 @@
       "shape": "capsule",
       "radius_m": 0.09,
       "length_m": 0.42,
-      "center_m": [
+      "material": "soft_tissue",
+      "local_center_m": [
         0.12,
-        0.58,
+        -0.37,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "shin_r",
@@ -194,12 +194,12 @@
       "shape": "capsule",
       "radius_m": 0.065,
       "length_m": 0.4,
-      "center_m": [
-        0.12,
-        0.13,
+      "material": "soft_tissue",
+      "local_center_m": [
+        0,
+        -0.45,
         0
-      ],
-      "material": "soft_tissue"
+      ]
     },
     {
       "id": "foot_r",
@@ -210,12 +210,12 @@
         0.055,
         0.16
       ],
-      "center_m": [
-        0.12,
-        0.035,
+      "material": "soft_tissue",
+      "local_center_m": [
+        0,
+        -0.095,
         0.09
-      ],
-      "material": "soft_tissue"
+      ]
     }
   ],
   "joints": [

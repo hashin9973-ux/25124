@@ -5,9 +5,10 @@
   "asset_type": "species_base",
   "represents_individual_character": false,
   "model": {
-    "source": "models/human.glb",
+    "source": null,
     "format": "glb",
-    "units": "meters"
+    "units": "meters",
+    "target": "models/human.glb"
   },
   "rig": "worlds/character_studio/data/rigs/human.rig.json",
   "action_sets": [

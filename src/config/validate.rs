@@ -345,6 +345,22 @@ mod tests {
     }
 
     #[test]
+    fn character_studio_world_configuration_is_valid() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let config = RuntimeConfig::load(
+            root.to_path_buf(),
+            root.join("worlds/character_studio/data"),
+            root.join("worlds/character_studio/assets"),
+            root.join("worlds/character_studio/world.json"),
+        )
+        .expect("Character Studio configuration should validate");
+
+        assert_eq!(config.world.id, "character_studio");
+        assert_eq!(config.world.objects.len(), 3);
+        assert!(config.components.definitions.contains_key("species.segment_proxy"));
+    }
+
+    #[test]
     fn model_scene_selectors_are_explicit_and_numeric() {
         use super::validate_asset_path;
 

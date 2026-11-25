@@ -6,37 +6,12 @@
     {
       "id": "locomotion.walk_forward",
       "display_name": "Walk Forward",
-      "activation": "while_any_trigger_is_active",
+      "activation": "while_trigger_and_conditions_hold",
       "triggers": [
         {
           "id": "key_forward",
           "kind": "key_held",
           "key": "KeyW"
-        },
-        {
-          "id": "foot_surface",
-          "kind": "surface_contact",
-          "segments": [
-            "foot_l",
-            "foot_r"
-          ],
-          "surface_tags": [
-            "walkable",
-            "ground"
-          ],
-          "minimum_normal_dot": 0.65
-        },
-        {
-          "id": "pelvis_tilt",
-          "kind": "joint_angle_threshold",
-          "joint": "spine_lower",
-          "axis_local": [
-            1,
-            0,
-            0
-          ],
-          "comparison": "less_than",
-          "angle_degrees": 35
         }
       ],
       "actuators": [
@@ -111,7 +86,32 @@
         "priority": 10,
         "fade_in_s": 0.12,
         "fade_out_s": 0.18
-      }
+      },
+      "conditions": [
+        {
+          "kind": "surface_contact",
+          "segments": [
+            "foot_l",
+            "foot_r"
+          ],
+          "surface_tags": [
+            "walkable",
+            "ground"
+          ],
+          "minimum_normal_dot": 0.65
+        },
+        {
+          "kind": "joint_angle_threshold",
+          "joint": "spine_lower",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "comparison": "less_than",
+          "angle_degrees": 35
+        }
+      ]
     },
     {
       "id": "reflex.hand_contact",
