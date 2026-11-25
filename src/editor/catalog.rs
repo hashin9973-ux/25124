@@ -1150,7 +1150,11 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 mod tests {
     use std::path::Path;
 
-    use super::{CharacterStudioWorkspace, read_catalog, validate_relative_path};
+    use serde_json::Value;
+
+    use super::{
+        CharacterStudioWorkspace, read_catalog, validate_action_set, validate_relative_path,
+    };
 
     #[test]
     fn checked_in_character_studio_data_cross_references_load() {
