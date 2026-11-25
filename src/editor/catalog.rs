@@ -18,6 +18,7 @@ use super::{
 };
 use crate::{
     config::{BodyType, RuntimeConfig},
+    modeling::{MeshDocument, create_empty_mesh_document, discover_mesh_documents},
     persistence::{WorldSaveTarget, WorldStateFile},
 };
 
@@ -127,8 +128,10 @@ pub struct CharacterStudioWorkspace {
     pub species_index: String,
     pub actions_index: String,
     pub tool_catalog_path: String,
+    pub model_output_directory: String,
     pub output_directories: Vec<String>,
     pub species: Vec<Value>,
+    pub mesh_documents: Vec<MeshDocument>,
     pub rigs: Vec<CharacterRigDefinition>,
     pub action_sets: Vec<Value>,
     pub tool_catalog: Value,
@@ -147,6 +150,7 @@ struct WorkspaceFile {
     species_index: String,
     actions_index: String,
     tool_catalog: String,
+    model_output_directory: String,
     output_directories: Vec<String>,
 }
 
@@ -181,7 +185,12 @@ struct ActionIndexEntry {
 }
 
 impl CharacterStudioWorkspace {
-    fn load(project_root: &Path, data_dir: &Path, expected_id: &str) -> Result<Self> {
+    fn load(
+        project_root: &Path,
+        data_dir: &Path,
+        outputs_dir: &Path,
+        expected_id: &str,
+    ) -> Result<Self> {
         let workspace_path = data_dir.join("editor/workspace.json");
         let workspace: WorkspaceFile = read_json(&workspace_path)?;
         ensure!(
@@ -406,6 +415,23 @@ impl CharacterStudioWorkspace {
         for relative in &workspace.output_directories {
             validate_relative_path(relative)?;
         }
+        validate_relative_path(&workspace.model_output_directory)?;
+        ensure!(
+            workspace
+                .output_directories
+                .iter()
+                .any(|directory| directory == &workspace.model_output_directory),
+            "model_output_directory must also appear in output_directories"
+        );
+        let model_output_path = outputs_dir.join(&workspace.model_output_directory);
+        fs::create_dir_all(&model_output_path).with_context(|| {
+            format!(
+                "could not create mesh output directory '{}'",
+                model_output_path.display()
+            )
+        })?;
+        let model_output_path = safe_project_path(outputs_dir, &workspace.model_output_directory)?;
+        let mesh_documents = discover_mesh_documents(&model_output_path)?;
 
         Ok(Self {
             schema_version: workspace.schema_version,
@@ -418,8 +444,10 @@ impl CharacterStudioWorkspace {
             species_index: workspace.species_index,
             actions_index: workspace.actions_index,
             tool_catalog_path: workspace.tool_catalog,
+            model_output_directory: workspace.model_output_directory,
             output_directories: workspace.output_directories,
             species: species_documents,
+            mesh_documents,
             rigs: rig_documents,
             action_sets: action_documents,
             tool_catalog,
@@ -437,7 +465,8 @@ fn create_species_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> R
         .with_context(|| format!("could not resolve project root '{}'", project_root.display()))?;
     let data_dir = safe_project_path(&project_root, &entry.data)?;
     let outputs_dir = safe_project_path(&project_root, &entry.outputs)?;
-    let workspace = CharacterStudioWorkspace::load(&project_root, &data_dir, &entry.id)?;
+    let workspace =
+        CharacterStudioWorkspace::load(&project_root, &data_dir, &outputs_dir, &entry.id)?;
     let index_path = safe_project_path(&data_dir, &workspace.species_index)?;
     let species_output_dir = outputs_dir.join("species");
     fs::create_dir_all(&species_output_dir).with_context(|| {
@@ -452,6 +481,24 @@ fn create_species_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> R
             )
         })?;
     persist_new_species_definition(&project_root, &index_path, &species_output_dir)
+}
+
+fn create_mesh_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> Result<String> {
+    ensure!(
+        entry.kind == WorldKind::CharacterStudio,
+        "mesh documents can only be created in Character Studio"
+    );
+    let project_root = project_root
+        .canonicalize()
+        .with_context(|| format!("could not resolve project root '{}'", project_root.display()))?;
+    let data_dir = safe_project_path(&project_root, &entry.data)?;
+    let outputs_dir = safe_project_path(&project_root, &entry.outputs)?;
+    let workspace =
+        CharacterStudioWorkspace::load(&project_root, &data_dir, &outputs_dir, &entry.id)?;
+    let model_output_directory =
+        safe_project_path(&outputs_dir, &workspace.model_output_directory)?;
+    let document = create_empty_mesh_document(&model_output_directory)?;
+    Ok(document.id)
 }
 
 fn persist_new_species_definition(
@@ -1435,6 +1482,31 @@ pub(super) fn process_menu_command(
             }
             Ok(())
         }
+        MenuAction::CreateMesh => (|| {
+            ensure!(
+                active_world.kind == Some(WorldKind::CharacterStudio),
+                "mesh documents can only be created while Character Studio is active"
+            );
+            let active_id = active_world
+                .id
+                .as_deref()
+                .context("no active Character Studio world is selected")?;
+            let studio = catalog
+                .worlds
+                .iter()
+                .find(|world| world.id == active_id && world.kind == WorldKind::CharacterStudio)
+                .context("active Character Studio world is missing from the catalog")?;
+            let mesh_id = create_mesh_for_world(&root.0, studio)?;
+            let data_dir = safe_project_path(&root.0, &studio.data)?;
+            let outputs_dir = safe_project_path(&root.0, &studio.outputs)?;
+            *studio_workspace =
+                CharacterStudioWorkspace::load(&root.0, &data_dir, &outputs_dir, &studio.id)?;
+            info!(
+                "Created empty mesh document '{mesh_id}' in workspace '{}'",
+                studio_workspace.display_name
+            );
+            Ok(())
+        })(),
         MenuAction::CreateSpecies => (|| {
             ensure!(
                 active_world.kind == Some(WorldKind::CharacterStudio),
@@ -1451,7 +1523,9 @@ pub(super) fn process_menu_command(
                 .context("active Character Studio world is missing from the catalog")?;
             let species_id = create_species_for_world(&root.0, studio)?;
             let data_dir = safe_project_path(&root.0, &studio.data)?;
-            *studio_workspace = CharacterStudioWorkspace::load(&root.0, &data_dir, &studio.id)?;
+            let outputs_dir = safe_project_path(&root.0, &studio.outputs)?;
+            *studio_workspace =
+                CharacterStudioWorkspace::load(&root.0, &data_dir, &outputs_dir, &studio.id)?;
             info!(
                 "Created species draft '{species_id}' in workspace '{}'",
                 studio_workspace.display_name
@@ -1529,6 +1603,7 @@ fn open_world(context: WorldOpenContext<'_>) -> Result<()> {
             CharacterStudioWorkspace::load(
                 &loaded.paths.root_dir,
                 &loaded.paths.data_dir,
+                &outputs_dir,
                 &entry.id,
             )?;
         info!(
@@ -1540,9 +1615,10 @@ fn open_world(context: WorldOpenContext<'_>) -> Result<()> {
             studio_workspace.tool_catalog_path
         );
         info!(
-            "Studio loaded {} species, {} action sets, {} tool groups, schema {}",
+            "Studio loaded {} species, {} action sets, {} mesh documents, {} tool groups, schema {}",
             studio_workspace.species.len(),
             studio_workspace.action_sets.len(),
+            studio_workspace.mesh_documents.len(),
             studio_workspace
                 .tool_catalog
                 .get("tool_groups")
@@ -1708,8 +1784,10 @@ mod tests {
     fn checked_in_character_studio_workspace_loads_empty() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let data_dir = root.join("worlds/character_studio/data");
-        let workspace = CharacterStudioWorkspace::load(root, &data_dir, "character_studio")
-            .expect("empty Character Studio workspace should load");
+        let outputs_dir = root.join("worlds/character_studio/outputs");
+        let workspace =
+            CharacterStudioWorkspace::load(root, &data_dir, &outputs_dir, "character_studio")
+                .expect("empty Character Studio workspace should load");
 
         assert_eq!(workspace.id, "character_studio");
         assert_eq!(workspace.display_name, "Character Studio");
@@ -1717,6 +1795,8 @@ mod tests {
         assert!(workspace.species.is_empty());
         assert!(workspace.rigs.is_empty());
         assert!(workspace.action_sets.is_empty());
+        assert!(workspace.mesh_documents.is_empty());
+        assert_eq!(workspace.model_output_directory, "models");
         assert!(
             workspace
                 .tool_catalog

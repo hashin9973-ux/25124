@@ -78,6 +78,7 @@ jobs:
             "worlds/character_studio/world.json",
             "worlds/character_studio/data/editor/workspace.json",
             "worlds/character_studio/data/editor/tools.json",
+            "worlds/character_studio/data/editor/modeling.json",
             "worlds/character_studio/data/species/index.json",
             "worlds/character_studio/data/actions/index.json"
           )
@@ -93,7 +94,8 @@ jobs:
             "mods",
             "worlds/sandbox/outputs",
             "worlds/character_studio/assets",
-            "worlds/character_studio/outputs"
+            "worlds/character_studio/outputs",
+            "worlds/character_studio/outputs/models"
           )
           foreach ($path in $requiredDirectories) {
             $candidate = Join-Path $root $path

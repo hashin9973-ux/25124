@@ -14,9 +14,9 @@ pub(super) fn ensure_studio_callouts(
     mut commands: Commands,
     active_world: Res<ActiveWorld>,
     cameras: Query<Entity, With<FreeFlyCamera>>,
-    callouts: Query<Entity, With<StudioCallout>>,
+    callouts: Query<&StudioCallout>,
 ) {
-    if active_world.kind != Some(WorldKind::CharacterStudio) || !callouts.is_empty() {
+    if active_world.kind != Some(WorldKind::CharacterStudio) {
         return;
     }
 
@@ -24,13 +24,47 @@ pub(super) fn ensure_studio_callouts(
         return;
     };
 
+    let has_species_callout = callouts
+        .iter()
+        .any(|callout| matches!(&callout.action, MenuAction::CreateSpecies));
+    if !has_species_callout {
+        spawn_studio_callout(
+            &mut commands,
+            camera,
+            MenuAction::CreateSpecies,
+            "CREATE SPECIES",
+            Vec3::new(0.0, -0.48, -3.0),
+            Vec2::new(230.0, 48.0),
+        );
+    }
+
+    let has_mesh_callout = callouts
+        .iter()
+        .any(|callout| matches!(&callout.action, MenuAction::CreateMesh));
+    if !has_mesh_callout {
+        spawn_studio_callout(
+            &mut commands,
+            camera,
+            MenuAction::CreateMesh,
+            "CREATE MESH",
+            Vec3::new(0.0, -1.05, -3.0),
+            Vec2::new(170.0, 48.0),
+        );
+    }
+}
+
+fn spawn_studio_callout(
+    commands: &mut Commands,
+    camera: Entity,
+    action: MenuAction,
+    label: &str,
+    position: Vec3,
+    hit_extent: Vec2,
+) {
     let mut callout = commands.spawn((
-        Name::new("Create species annotation"),
-        StudioCallout {
-            action: MenuAction::CreateSpecies,
-            hit_extent: Vec2::new(230.0, 58.0),
-        },
-        Transform::from_xyz(0.0, -0.65, -3.0),
+        Name::new(format!("{label} annotation")),
+        StudioCallout { action, hit_extent },
+        Transform::from_translation(position),
     ));
     callout.with_children(|parent| {
         for offset in [
@@ -42,16 +76,16 @@ pub(super) fn ensure_studio_callouts(
             Vec3::new(0.03, 0.03, -0.03),
         ] {
             parent.spawn((
-                Text2d::new("CREATE SPECIES"),
-                TextFont::from_font_size(48.0),
+                Text2d::new(label),
+                TextFont::from_font_size(42.0),
                 TextColor(Color::BLACK),
                 Anchor::Center,
                 Transform::from_translation(offset),
             ));
         }
         parent.spawn((
-            Text2d::new("CREATE SPECIES"),
-            TextFont::from_font_size(48.0),
+            Text2d::new(label),
+            TextFont::from_font_size(42.0),
             TextColor(Color::WHITE),
             Anchor::Center,
             Transform::from_xyz(0.0, 0.0, 0.025),

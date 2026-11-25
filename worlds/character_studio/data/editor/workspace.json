@@ -6,6 +6,7 @@
   "species_index": "species/index.json",
   "actions_index": "actions/index.json",
   "tool_catalog": "editor/tools.json",
+  "model_output_directory": "models",
   "output_directories": [
     "species",
     "models",

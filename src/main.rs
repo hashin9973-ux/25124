@@ -3,6 +3,7 @@ mod config;
 mod engine;
 mod editor;
 mod persistence;
+mod modeling;
 mod physics;
 mod rendering;
 mod world;

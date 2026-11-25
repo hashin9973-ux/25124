@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "Declarative tool registry. Operators marked specification_only are not yet wired to editable mesh data.",
+  "note": "Mesh topology and persistence have a reusable runtime core. The viewport currently creates empty documents; vertex and edge selection/editing UI remains incomplete.",
   "implemented_foundation": [
     "world_browser",
     "world_local_data_loading",
@@ -8,13 +8,17 @@
     "species_base_catalog",
     "action_trigger_contract",
     "physics_world_viewport",
-    "articulated_ragdoll_preview"
+    "articulated_ragdoll_preview",
+    "mesh_document_persistence",
+    "mesh_topology_validation",
+    "mesh_vertex_translation",
+    "mesh_face_extrusion"
   ],
   "tool_groups": [
     {
       "id": "mesh_edit",
       "name": "Mesh Editing",
-      "status": "specification_only",
+      "status": "topology_core",
       "selection_modes": [
         "vertex",
         "edge",
@@ -35,6 +39,14 @@
         "recalculate_normals",
         "separate",
         "join"
+      ],
+      "implemented_operators": [
+        "create_mesh_document",
+        "add_vertex",
+        "add_edge",
+        "create_face",
+        "translate_vertices",
+        "extrude_face"
       ]
     },
     {

@@ -12,7 +12,18 @@
       "edge",
       "face"
     ],
-    "normal_policy": "recompute_on_topology_change"
+    "normal_policy": "recompute_on_topology_change",
+    "runtime_core": {
+      "document": "world_owned_json_mesh_document",
+      "elements": [
+        "vertex",
+        "edge",
+        "face"
+      ],
+      "face_boundary": "explicit_ordered_edge_loop",
+      "uvs": "per_face_corner",
+      "normals": "derived_from_face_loop"
+    }
   },
   "operators": {
     "transform": {
@@ -41,6 +52,14 @@
       "solidify",
       "decimate",
       "boolean"
+    ],
+    "implemented": [
+      "create_empty_mesh_document",
+      "add_vertex",
+      "add_edge",
+      "create_face",
+      "translate_vertices",
+      "extrude_face"
     ]
   },
   "symmetry": {
