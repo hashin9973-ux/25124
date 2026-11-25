@@ -305,7 +305,10 @@ impl CharacterStudioWorkspace {
 
             if let Some(rig_reference) = species.get("rig").filter(|value| !value.is_null()) {
                 let rig_reference = rig_reference.as_str().ok_or_else(|| {
-                    anyhow::anyhow!("species '{}' rig must be a relative path or null", reference.id)
+                    anyhow::anyhow!(
+                        "species '{}' rig must be a relative path or null",
+                        reference.id
+                    )
                 })?;
                 let rig_path = safe_project_path(project_root, rig_reference)?;
                 let rig: Value = read_json(&rig_path)?;
@@ -342,7 +345,9 @@ impl CharacterStudioWorkspace {
                 }
 
                 let typed_rig: CharacterRigDefinition = serde_json::from_value(rig.clone())
-                    .with_context(|| format!("invalid typed rig data in '{}'", rig_path.display()))?;
+                    .with_context(|| {
+                        format!("invalid typed rig data in '{}'", rig_path.display())
+                    })?;
                 rig_ids.insert(reference.id.clone(), (segment_ids, joint_ids));
                 rig_documents.push(typed_rig);
             }
@@ -438,9 +443,14 @@ fn create_species_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> R
     fs::create_dir_all(&species_output_dir).with_context(|| {
         format!("could not create species output directory '{}'", species_output_dir.display())
     })?;
-    let species_output_dir = species_output_dir.canonicalize().with_context(|| {
-        format!("could not resolve species output directory '{}'", species_output_dir.display())
-    })?;
+    let species_output_dir = species_output_dir
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "could not resolve species output directory '{}'",
+                species_output_dir.display()
+            )
+        })?;
     persist_new_species_definition(&project_root, &index_path, &species_output_dir)
 }
 

@@ -192,7 +192,11 @@ fn build_world_browser_scene(
         camera_rotation(),
     );
 
-    if catalog.worlds.iter().any(|world| world.kind == WorldKind::CharacterStudio) {
+    if catalog
+        .worlds
+        .iter()
+        .any(|world| world.kind == WorldKind::CharacterStudio)
+    {
         spawn_callout(
             commands,
             meshes,
