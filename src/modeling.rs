@@ -824,7 +824,14 @@ pub fn discover_mesh_documents(directory: &Path) -> Result<Vec<MeshDocument>> {
         .collect::<Vec<_>>();
     for (backup_path, primary_path) in recovery_paths {
         match fs::symlink_metadata(&primary_path) {
-            Ok(_) => continue,
+            Ok(metadata) => {
+                ensure!(
+                    metadata.file_type().is_file(),
+                    "mesh document target '{}' must be a regular file",
+                    primary_path.display()
+                );
+                continue;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(error).with_context(|| {
@@ -877,14 +884,19 @@ pub fn discover_mesh_documents(directory: &Path) -> Result<Vec<MeshDocument>> {
     let mut documents = Vec::new();
     let mut ids = HashSet::new();
     for path in paths {
-        let file_type = fs::symlink_metadata(&path)?.file_type();
-        if !file_type.is_file()
-            || !path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().ends_with(".mesh.json"))
+        if !path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(".mesh.json"))
         {
             continue;
         }
+
+        let file_type = fs::symlink_metadata(&path)?.file_type();
+        ensure!(
+            file_type.is_file(),
+            "mesh document '{}' must be a regular file, not a symlink or directory",
+            path.display()
+        );
 
         let canonical_path = path
             .canonicalize()
@@ -1327,6 +1339,26 @@ mod tests {
         assert!(!backup.exists());
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mesh_discovery_rejects_symbolic_link_documents() {
+        use std::os::unix::fs::symlink;
+
+        let directory = temporary_directory("mesh-symlink");
+        fs::create_dir_all(&directory).unwrap();
+        let document = create_empty_mesh_document(&directory).unwrap();
+        let target = directory.join(format!("{}.mesh.json", document.id));
+        let outside = temporary_directory("mesh-symlink-target");
+        fs::write(&outside, fs::read(&target).unwrap()).unwrap();
+        fs::remove_file(&target).unwrap();
+        symlink(&outside, &target).unwrap();
+
+        assert!(discover_mesh_documents(&directory).is_err());
+
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_file(outside).unwrap();
     }
 
     #[test]
