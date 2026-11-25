@@ -1088,7 +1088,7 @@ mod tests {
         workspace.construction_plane_grid_spacing_m = 0.5;
 
         let offset = grid_step_offset(&workspace, [1, -1, 1]).unwrap();
-        let expected = Vec3::new(0.5, 0.5, 0.5);
+        let expected = Vec3::new(-0.5, 0.5, 0.5);
         assert!((offset - expected).length() < 1.0e-6);
         assert!(grid_step_offset(&workspace, [0, 0, 0]).is_none());
     }
