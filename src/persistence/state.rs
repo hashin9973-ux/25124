@@ -175,6 +175,7 @@ enum ReplaceStage {
     PreviousCommitted,
     PrimaryRemoved,
     PrimaryCommitted,
+    BackupRemoved,
     BackupCommitted,
 }
 
@@ -307,6 +308,8 @@ where
         if backup_path.exists() {
             fs::remove_file(&backup_path)
                 .with_context(|| format!("could not remove old save backup '{}'", backup_path.display()))?;
+            sync_directory(parent)?;
+            after_stage(ReplaceStage::BackupRemoved)?;
         }
         fs::rename(&previous_path, &backup_path).with_context(|| {
             format!(
@@ -496,6 +499,7 @@ mod tests {
             ReplaceStage::PreviousCommitted,
             ReplaceStage::PrimaryRemoved,
             ReplaceStage::PrimaryCommitted,
+            ReplaceStage::BackupRemoved,
             ReplaceStage::BackupCommitted,
         ];
 
@@ -526,6 +530,26 @@ mod tests {
                 .contains(&recovered.bodies["body-a"].translation_m),
                 "unexpected recovered state after interruption at {stage:?}"
             );
+
+            let backup_state = WorldStateFile::load_or_default(&backup_path(&path), "test-world");
+            if stage == ReplaceStage::BackupRemoved {
+                assert!(
+                    !backup_path(&path).exists(),
+                    "backup should be at the injected post-removal stage"
+                );
+            } else {
+                let backup_state = backup_state.expect("backup should remain valid before rotation");
+                let expected_backup_translation = if stage == ReplaceStage::BackupCommitted {
+                    [4.0, 5.0, 6.0]
+                } else {
+                    [1.0, 2.0, 3.0]
+                };
+                assert_eq!(
+                    backup_state.bodies["body-a"].translation_m,
+                    expected_backup_translation,
+                    "backup was rotated before the primary commit at {stage:?}"
+                );
+            }
 
             cleanup_save_files(&path);
         }
