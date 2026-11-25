@@ -12,5 +12,12 @@
     "actions",
     "previews",
     "autosaves"
-  ]
+  ],
+  "preview_species": "human",
+  "preview_origin_m": [
+    -4.5,
+    0,
+    1
+  ],
+  "rigging_settings": "editor/rigging.json"
 }

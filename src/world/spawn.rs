@@ -8,14 +8,13 @@ use avian3d::prelude::{
 use bevy::{gltf::prelude::GltfAssetLabel, prelude::*};
 
 use crate::{
-    editor::{ActiveWorld, CharacterStudioWorkspace, WorldKind},
-    world::character_preview,
     config::{
         AlphaMode, BodyType, CcdFilterDefinition, ColliderShape, ComponentDefinition,
         RuntimeConfig, SweepModeDefinition, VisualDefinition,
     },
+    editor::{ActiveWorld, CharacterStudioWorkspace, WorldKind},
     persistence::{PersistRuntimeState, PersistentObjectId, WorldStateFile},
-    world::WorldInstanceEntity,
+    world::{WorldInstanceEntity, character_preview},
 };
 
 pub(super) fn spawn_world(
@@ -133,14 +132,19 @@ pub(super) fn spawn_world(
     }
 
     if active_world.kind == Some(WorldKind::CharacterStudio) {
-        if let Some(rig) = studio_workspace.rigs.first() {
+        if let Some(rig) = studio_workspace
+            .rigs
+            .iter()
+            .find(|rig| rig.species == studio_workspace.preview_species)
+        {
             if let Err(error) = character_preview::spawn_rig(
                 &mut commands,
                 rig,
                 &config,
                 &mut meshes,
                 &mut materials,
-                Vec3::new(-4.5, 0.0, 1.0),
+                Vec3::from_array(studio_workspace.preview_origin_m),
+                &studio_workspace.preview_joint_damping,
             ) {
                 error!("Could not spawn species preview '{}': {error:#}", rig.species);
             }

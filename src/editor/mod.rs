@@ -4,7 +4,7 @@ mod water;
 
 pub use catalog::{
     ActiveWorld, CharacterRigDefinition, CharacterRigJoint, CharacterRigSegment,
-    CharacterStudioWorkspace, EditorProjectRoot, WorldCatalog, WorldKind,
+    CharacterStudioWorkspace, EditorProjectRoot, PreviewJointDamping, WorldCatalog, WorldKind,
 };
 use bevy::prelude::*;
 

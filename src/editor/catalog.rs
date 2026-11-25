@@ -65,6 +65,18 @@ pub struct ActiveWorld {
     pub outputs_dir: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct PreviewJointDamping {
+    pub linear: f32,
+    pub angular: f32,
+}
+
+#[derive(Deserialize)]
+struct RiggingSettingsFile {
+    schema_version: u32,
+    preview_joint_damping: PreviewJointDamping,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct CharacterRigDefinition {
     pub schema_version: u32,
@@ -107,6 +119,9 @@ pub struct CharacterStudioWorkspace {
     pub id: String,
     pub display_name: String,
     pub units: String,
+    pub preview_species: String,
+    pub preview_origin_m: [f32; 3],
+    pub preview_joint_damping: PreviewJointDamping,
     pub species_index: String,
     pub actions_index: String,
     pub tool_catalog_path: String,
@@ -124,6 +139,9 @@ struct WorkspaceFile {
     id: String,
     display_name: String,
     units: String,
+    preview_species: String,
+    preview_origin_m: [f32; 3],
+    rigging_settings: String,
     species_index: String,
     actions_index: String,
     tool_catalog: String,
@@ -182,6 +200,25 @@ impl CharacterStudioWorkspace {
         ensure!(
             !workspace.units.trim().is_empty(),
             "character studio workspace units cannot be empty"
+        );
+        ensure!(
+            workspace.preview_origin_m.iter().all(|value| value.is_finite()),
+            "character studio preview_origin_m must contain finite values"
+        );
+
+        let rigging_settings_path = safe_project_path(data_dir, &workspace.rigging_settings)?;
+        let rigging_settings: RiggingSettingsFile = read_json(&rigging_settings_path)?;
+        ensure!(
+            rigging_settings.schema_version == 1,
+            "unsupported rigging settings schema in '{}'",
+            rigging_settings_path.display()
+        );
+        ensure!(
+            rigging_settings.preview_joint_damping.linear.is_finite()
+                && rigging_settings.preview_joint_damping.linear >= 0.0
+                && rigging_settings.preview_joint_damping.angular.is_finite()
+                && rigging_settings.preview_joint_damping.angular >= 0.0,
+            "preview joint damping values must be finite and non-negative"
         );
 
         let species_index_path = safe_project_path(data_dir, &workspace.species_index)?;
@@ -282,6 +319,12 @@ impl CharacterStudioWorkspace {
             rig_documents.push(typed_rig);
         }
 
+        ensure!(
+            species_ids.contains(workspace.preview_species.as_str()),
+            "workspace preview species '{}' is not present in the species index",
+            workspace.preview_species
+        );
+
         let mut action_set_ids = HashSet::new();
         let mut action_documents = Vec::with_capacity(actions_index.action_sets.len());
         for reference in &actions_index.action_sets {
@@ -322,6 +365,9 @@ impl CharacterStudioWorkspace {
             id: workspace.id,
             display_name: workspace.display_name,
             units: workspace.units,
+            preview_species: workspace.preview_species,
+            preview_origin_m: workspace.preview_origin_m,
+            preview_joint_damping: rigging_settings.preview_joint_damping,
             species_index: workspace.species_index,
             actions_index: workspace.actions_index,
             tool_catalog_path: workspace.tool_catalog,
@@ -1115,6 +1161,9 @@ mod tests {
 
         assert_eq!(workspace.id, "character_studio");
         assert_eq!(workspace.display_name, "Character Studio");
+        assert_eq!(workspace.preview_species, "human");
+        assert_eq!(workspace.preview_origin_m, [-4.5, 0.0, 1.0]);
+        assert_eq!(workspace.preview_joint_damping.angular, 0.32);
         assert_eq!(workspace.species.len(), 1);
         assert_eq!(workspace.rigs.len(), 1);
         assert_eq!(workspace.rigs[0].segments.len(), 16);
@@ -1149,5 +1198,87 @@ mod tests {
                 .iter()
                 .any(|world| world.id == "character_studio")
         );
+    }
+}
+
+
+#[cfg(test)]
+mod preview_rig_tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    use bevy::prelude::{EulerRot, Quat, Vec3};
+
+    use super::CharacterStudioWorkspace;
+
+    #[test]
+    fn human_rig_joint_anchors_coincide_in_the_authored_rest_pose() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = CharacterStudioWorkspace::load(
+            root,
+            &root.join("worlds/character_studio/data"),
+            "character_studio",
+        )
+        .expect("Character Studio data should load");
+        let rig = workspace
+            .rigs
+            .iter()
+            .find(|rig| rig.species == "human")
+            .expect("human rig should be indexed");
+
+        let mut transforms = HashMap::<String, (Vec3, Quat)>::new();
+        let mut pending = rig.segments.iter().collect::<Vec<_>>();
+        while !pending.is_empty() {
+            let previous_pending = pending.len();
+            let mut remaining = Vec::with_capacity(previous_pending);
+
+            for segment in pending {
+                let parent = match segment.parent.as_deref() {
+                    Some(parent_id) => transforms.get(parent_id).copied(),
+                    None => Some((Vec3::ZERO, Quat::IDENTITY)),
+                };
+                let Some((parent_position, parent_rotation)) = parent else {
+                    remaining.push(segment);
+                    continue;
+                };
+
+                let local_position = Vec3::from_array(segment.local_center_m);
+                let local_rotation = Quat::from_euler(
+                    EulerRot::XYZ,
+                    segment.local_rotation_degrees_xyz[0].to_radians(),
+                    segment.local_rotation_degrees_xyz[1].to_radians(),
+                    segment.local_rotation_degrees_xyz[2].to_radians(),
+                );
+                transforms.insert(
+                    segment.id.clone(),
+                    (
+                        parent_position + parent_rotation * local_position,
+                        parent_rotation * local_rotation,
+                    ),
+                );
+            }
+
+            assert!(
+                remaining.len() < previous_pending,
+                "rig hierarchy could not be resolved"
+            );
+            pending = remaining;
+        }
+
+        for joint in &rig.joints {
+            let (parent_position, parent_rotation) = transforms[&joint.parent];
+            let (child_position, child_rotation) = transforms[&joint.child];
+            let parent_anchor = parent_position
+                + parent_rotation * Vec3::from_array(joint.anchor_parent_m);
+            let child_anchor =
+                child_position + child_rotation * Vec3::from_array(joint.anchor_child_m);
+            let mismatch = parent_anchor.distance(child_anchor);
+
+            assert!(
+                mismatch <= 1.0e-4,
+                "joint '{}' rest-pose anchors differ by {mismatch:.6} m",
+                joint.id
+            );
+        }
     }
 }

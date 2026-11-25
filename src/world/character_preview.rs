@@ -10,12 +10,11 @@ use bevy::prelude::*;
 
 use crate::{
     config::{MaterialDefinition, RuntimeConfig},
-    editor::{CharacterRigDefinition, CharacterRigJoint, CharacterRigSegment},
+    editor::{
+        CharacterRigDefinition, CharacterRigJoint, CharacterRigSegment, PreviewJointDamping,
+    },
     world::WorldInstanceEntity,
 };
-
-const PREVIEW_LINEAR_JOINT_DAMPING: f32 = 0.12;
-const PREVIEW_ANGULAR_JOINT_DAMPING: f32 = 0.32;
 
 #[derive(Component, Debug)]
 pub struct SpeciesPreviewSegment {
@@ -129,6 +128,7 @@ pub(super) fn spawn_rig(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     origin: Vec3,
+    joint_damping: &PreviewJointDamping,
 ) -> Result<()> {
     ensure!(rig.schema_version == 1, "unsupported rig schema for '{}'", rig.species);
     let mut pending = rig.segments.iter().collect::<Vec<_>>();
@@ -297,8 +297,8 @@ fn spawn_joint(
     let limits = joint.angular_limits_degrees.as_deref();
 
     let damping = JointDamping {
-        linear: PREVIEW_LINEAR_JOINT_DAMPING,
-        angular: PREVIEW_ANGULAR_JOINT_DAMPING,
+        linear: joint_damping.linear,
+        angular: joint_damping.angular,
     };
 
     let name = format!("{}::joint::{}", rig.species, joint.id);

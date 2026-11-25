@@ -54,15 +54,13 @@ Character Studio is a separate catalog world. Its `assets/`, `data/` and `output
 
 A **species** is a reusable base definition (the checked-in example is `human`), not an individual character. The species record links to a rig and action sets. Runtime individuals are intended to be instances derived from a species.
 
-The sample rig defines articulated rigid-body segments and joints. It explicitly does not use rotation locks or translation locks. The action JSON describes:
-- input triggers such as a held key;
-- conditions such as foot/surface contact and joint-angle thresholds;
-- collision-triggered reflexes;
-- joint torque and bounded joint-angular-velocity actuators.
+When Character Studio opens, the workspace selects the species named by `preview_species` and builds a passive physical preview from its rig JSON. The Human preview currently contains 16 dynamic rigid-body segments and 15 Avian joints. Segment geometry, mass density, friction, restitution and body damping come from the rig and world-local material data. Directly connected segments do not collide with one another; the joints have separately configured relative-velocity damping. The preview origin and joint damping are workspace data, not code constants. Preview body state is transient and is not included in the world's F5 save file yet.
 
-The execution contract disables impulse jumps, root teleportation, rotation locks and external-object push movement. The action schema is data only at this stage: the runtime evaluator that turns triggers into joint motor forces is not implemented yet. Soft-body runtime support is also not implemented.
+The sample rig does not use fixed joints or rotation/translation locks. Its ball joints map to Avian spherical joints, while its hinge joints map to revolute joints. Avian spherical limits use a circular swing cone plus a twist interval; the current adapter maps the authored X/Z limits to one symmetric maximum swing bound and retains the signed Y twist range. This is a useful preview approximation, not an exact representation of an arbitrary asymmetric three-axis Euler limit box.
 
-The external editor tool registry records the planned breadth of the studio (mesh edit, sculpt, surface/topology, PBR materials, rigging, animation, physics actions and export). Entries marked `specification_only` are design contracts—not working operators. A human GLB has not been authored yet; `outputs/models/human.glb` is the intended export target, not an existing asset.
+The action JSON describes input triggers (for example, a held key), contact/geometry and joint-angle conditions, collision-triggered reflexes, and joint torque or bounded angular-velocity-target actuators. The execution contract disables impulse jumps, root teleportation, rotation locks and external-object push movement. These action documents are validated and loaded, but the runtime action evaluator that turns their triggers into bounded physical torque/force output is not implemented yet. Joint motors/articulations are not being simulated by this preview. Soft-body runtime support is also not implemented.
+
+The external editor tool registry records the planned breadth of the studio (mesh edit, sculpt, surface/topology, PBR materials, rigging, animation, physics actions and export). The rigging preview is operational; other tool groups marked `specification_only` are design contracts—not working operators. A human GLB has not been authored yet; `outputs/models/human.glb` is the intended export target, not an existing asset.
 
 ## Run and controls
 

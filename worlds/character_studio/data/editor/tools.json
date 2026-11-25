@@ -7,7 +7,8 @@
     "world_local_asset_namespace",
     "species_base_catalog",
     "action_trigger_contract",
-    "physics_world_viewport"
+    "physics_world_viewport",
+    "articulated_ragdoll_preview"
   ],
   "tool_groups": [
     {
@@ -102,7 +103,7 @@
     {
       "id": "rigging",
       "name": "Rigging",
-      "status": "data_contract",
+      "status": "runtime_preview",
       "features": [
         "bone_hierarchy",
         "deform_weights",
@@ -112,7 +113,14 @@
         "joint_limits",
         "physics_motors"
       ],
-      "rotation_locks": false
+      "rotation_locks": false,
+      "runtime_features": [
+        "typed_species_rig_loading",
+        "validated_segment_hierarchy",
+        "dynamic_rigid_body_segments",
+        "spherical_and_revolute_joint_preview",
+        "per_segment_physical_materials"
+      ]
     },
     {
       "id": "animation",
