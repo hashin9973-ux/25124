@@ -9,7 +9,10 @@ use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{EditorScreen, MenuAction, PendingMenuCommand};
+use super::{
+    EditorScreen, MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE,
+    WorldBrowserPage,
+};
 use crate::{
     config::{BodyType, RuntimeConfig},
     persistence::{WorldSaveTarget, WorldStateFile},
@@ -38,11 +41,20 @@ pub struct WorldCatalogEntry {
     pub outputs: String,
 }
 
-#[derive(Resource, Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Resource, Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldCatalog {
     pub schema_version: u32,
     pub worlds: Vec<WorldCatalogEntry>,
+}
+
+impl Default for WorldCatalog {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            worlds: Vec::new(),
+        }
+    }
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -103,11 +115,26 @@ pub(super) fn load_world_catalog(
 ) {
     let path = root.0.join("worlds/catalog.json");
     match read_catalog(&path) {
-        Ok(loaded) => {
+        Ok(mut loaded) => {
+            let before = loaded.worlds.len();
+            loaded.worlds.retain(|world| {
+                let paths_exist = root.0.join(&world.manifest).is_file()
+                    && root.0.join(&world.data).is_dir()
+                    && root.0.join(&world.assets).is_dir()
+                    && root.0.join(&world.outputs).is_dir();
+                if !paths_exist {
+                    warn!(
+                        "Skipping unavailable world '{}' because one or more catalog paths are missing",
+                        world.id
+                    );
+                }
+                paths_exist
+            });
             *catalog = loaded;
             info!(
-                "Loaded {} world entries from '{}'",
+                "Loaded {} of {} available world entries from '{}'",
                 catalog.worlds.len(),
+                before,
                 path.display()
             );
         }
@@ -167,6 +194,8 @@ pub(super) fn process_menu_command(
     mut gravity: ResMut<Gravity>,
     mut active_world: ResMut<ActiveWorld>,
     mut studio_workspace: ResMut<CharacterStudioWorkspace>,
+    mut page: ResMut<WorldBrowserPage>,
+    mut scene_dirty: ResMut<MenuSceneDirty>,
     mut next_screen: ResMut<NextState<EditorScreen>>,
 ) {
     let Some(action) = pending.0.take() else {
@@ -199,6 +228,22 @@ pub(super) fn process_menu_command(
                 ),
                 None => bail!("world id '{id}' is not present in the catalog"),
             }
+        }
+        MenuAction::PreviousWorldPage => {
+            let page_count = catalog.worlds.len().div_ceil(WORLD_PAGE_SIZE);
+            if page_count > 1 {
+                page.0 = (page.0 + page_count - 1) % page_count;
+                scene_dirty.0 = true;
+            }
+            Ok(())
+        }
+        MenuAction::NextWorldPage => {
+            let page_count = catalog.worlds.len().div_ceil(WORLD_PAGE_SIZE);
+            if page_count > 1 {
+                page.0 = (page.0 + 1) % page_count;
+                scene_dirty.0 = true;
+            }
+            Ok(())
         }
         MenuAction::CreateWorld => {
             create_empty_world(&root.0, &mut catalog).and_then(|world| {
@@ -255,6 +300,14 @@ fn open_world(
 
     if matches!(entry.kind, WorldKind::CharacterStudio) {
         *studio_workspace = CharacterStudioWorkspace::load(&loaded.paths.data_dir)?;
+        info!(
+            "Loaded workspace '{}' ({}) with species index '{}', action index '{}', and tool catalog '{}'",
+            studio_workspace.display_name,
+            studio_workspace.units,
+            studio_workspace.species_index,
+            studio_workspace.actions_index,
+            studio_workspace.tool_catalog
+        );
         for directory in &studio_workspace.output_directories {
             let output = safe_project_path(&outputs_dir, directory)?;
             fs::create_dir_all(&output).with_context(|| {
@@ -295,6 +348,15 @@ fn open_world(
         state_path: loaded.paths.world_state.clone(),
     };
     *state_file = loaded_state;
+    info!(
+        "Loaded world '{}' from manifest '{}' (root '{}', data '{}', assets '{}', outputs '{}')",
+        loaded.world.name,
+        loaded.paths.world_manifest.display(),
+        loaded.paths.root_dir.display(),
+        loaded.paths.data_dir.display(),
+        loaded.paths.assets_dir.display(),
+        outputs_dir.display()
+    );
     *runtime_config = loaded;
     active_world.id = Some(entry.id.clone());
     active_world.kind = Some(entry.kind);

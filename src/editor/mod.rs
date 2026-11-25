@@ -22,6 +22,8 @@ pub enum MenuAction {
     BackToMainMenu,
     LoadWorld(String),
     CreateWorld,
+    PreviousWorldPage,
+    NextWorldPage,
 }
 
 #[derive(Resource, Default)]
@@ -32,6 +34,8 @@ struct WorldBrowserPage(usize);
 
 #[derive(Resource, Default)]
 struct MenuSceneDirty(bool);
+
+pub(super) const WORLD_PAGE_SIZE: usize = 5;
 
 pub struct EditorPlugin;
 

@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
 use super::{
-    MenuAction, PendingMenuCommand, WorldCatalog,
+    MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE, WorldBrowserPage,
+    WorldCatalog,
     catalog::WorldKind,
     water::{RippleField, spawn_water},
 };
@@ -69,15 +70,48 @@ pub(super) fn spawn_main_menu(
 pub(super) fn spawn_world_browser(
     mut commands: Commands,
     catalog: Res<WorldCatalog>,
+    page: Res<WorldBrowserPage>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ripples: ResMut<RippleField>,
 ) {
     *ripples = RippleField::default();
-    spawn_base_scene(&mut commands, &mut meshes, &mut materials);
+    build_world_browser_scene(&mut commands, &catalog, page.0, &mut meshes, &mut materials);
+}
+
+pub(super) fn refresh_world_browser(
+    mut commands: Commands,
+    catalog: Res<WorldCatalog>,
+    page: Res<WorldBrowserPage>,
+    mut scene_dirty: ResMut<MenuSceneDirty>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ripples: ResMut<RippleField>,
+    existing_scene: Query<Entity, With<MenuScene>>,
+) {
+    if !scene_dirty.0 {
+        return;
+    }
+
+    scene_dirty.0 = false;
+    for entity in &existing_scene {
+        commands.entity(entity).despawn();
+    }
+    *ripples = RippleField::default();
+    build_world_browser_scene(&mut commands, &catalog, page.0, &mut meshes, &mut materials);
+}
+
+fn build_world_browser_scene(
+    commands: &mut Commands,
+    catalog: &WorldCatalog,
+    page_index: usize,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    spawn_base_scene(commands, meshes, materials);
 
     spawn_heading(
-        &mut commands,
+        commands,
         "SELECT A WORLD",
         Vec3::new(0.0, 5.3, -8.0),
         camera_rotation(),
@@ -86,8 +120,8 @@ pub(super) fn spawn_world_browser(
 
     let black = materials.add(Color::BLACK);
     spawn_callout(
-        &mut commands,
-        &mut meshes,
+        commands,
+        meshes,
         &black,
         "BACK",
         Vec3::new(-9.0, 0.0, 8.0),
@@ -95,30 +129,64 @@ pub(super) fn spawn_world_browser(
         camera_rotation(),
     );
 
-    for (index, entry) in catalog.worlds.iter().take(7).enumerate() {
-        let z = 4.6 - index as f32 * 3.0;
-        let x = match entry.kind {
-            WorldKind::CharacterStudio => -1.0,
-            WorldKind::PhysicsSandbox => 0.0,
-            WorldKind::Empty => 1.0,
-        };
+    let page_count = catalog.worlds.len().div_ceil(WORLD_PAGE_SIZE).max(1);
+    let selected_page = page_index.min(page_count - 1);
+    let first_world = selected_page * WORLD_PAGE_SIZE;
+    for (row, entry) in catalog
+        .worlds
+        .iter()
+        .skip(first_world)
+        .take(WORLD_PAGE_SIZE)
+        .enumerate()
+    {
+        let z = 4.0 - row as f32 * 2.5;
         spawn_callout(
-            &mut commands,
-            &mut meshes,
+            commands,
+            meshes,
             &black,
             &entry.name.to_uppercase(),
-            Vec3::new(x, 0.0, z),
+            Vec3::new(0.0, 0.0, z),
             MenuAction::LoadWorld(entry.id.clone()),
             camera_rotation(),
         );
     }
 
+    if page_count > 1 {
+        spawn_callout(
+            commands,
+            meshes,
+            &black,
+            "PREVIOUS",
+            Vec3::new(-7.0, 0.0, -8.5),
+            MenuAction::PreviousWorldPage,
+            camera_rotation(),
+        );
+        spawn_callout(
+            commands,
+            meshes,
+            &black,
+            &format!("PAGE {} OF {}", selected_page + 1, page_count),
+            Vec3::new(0.0, 0.0, -8.5),
+            MenuAction::Disabled,
+            camera_rotation(),
+        );
+        spawn_callout(
+            commands,
+            meshes,
+            &black,
+            "NEXT",
+            Vec3::new(7.0, 0.0, -8.5),
+            MenuAction::NextWorldPage,
+            camera_rotation(),
+        );
+    }
+
     spawn_callout(
-        &mut commands,
-        &mut meshes,
+        commands,
+        meshes,
         &black,
         "CREATE WORLD",
-        Vec3::new(8.0, 0.0, -5.5),
+        Vec3::new(9.0, 0.0, -2.0),
         MenuAction::CreateWorld,
         camera_rotation(),
     );
