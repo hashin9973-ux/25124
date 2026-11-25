@@ -9,11 +9,7 @@ mod world;
 use anyhow::Result;
 use bevy::{asset::AssetPlugin, prelude::*};
 
-use crate::{
-    config::RuntimeConfig,
-    engine::EnginePlugin,
-    persistence::WorldStateFile,
-};
+use crate::{config::RuntimeConfig, engine::EnginePlugin, persistence::WorldStateFile};
 
 fn main() {
     if let Err(error) = run() {
@@ -26,8 +22,7 @@ fn run() -> Result<()> {
     let Some(config) = RuntimeConfig::from_environment()? else {
         return Ok(());
     };
-    let world_state =
-        WorldStateFile::load_or_default(&config.paths.world_state, &config.world.id)?;
+    let world_state = WorldStateFile::load_or_default(&config.paths.world_state, &config.world.id)?;
     let asset_root = config.paths.assets_dir.to_string_lossy().into_owned();
 
     App::new()

@@ -9,7 +9,6 @@ use bevy::prelude::*;
 use crate::{
     config::{
         AlphaMode, BodyType, ColliderShape, ComponentDefinition, RuntimeConfig, VisualDefinition,
-        WorldObjectInstance,
     },
     persistence::{PersistentObjectId, WorldStateFile},
 };

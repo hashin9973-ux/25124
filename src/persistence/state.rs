@@ -105,7 +105,10 @@ fn load_valid_state(path: &Path, expected_world_id: &str) -> Result<Option<World
     );
 
     for (id, body) in &mut state.bodies {
-        ensure!(!id.trim().is_empty(), "save contains an empty persistent object id");
+        ensure!(
+                !id.trim().is_empty(),
+                "save contains an empty persistent object id"
+            );
         ensure!(
             body.translation_m
                 .iter()
@@ -224,8 +227,8 @@ mod tests {
         let expected = sample_state();
 
         expected.write_atomic(&path).expect("save should succeed");
-        let loaded = WorldStateFile::load_or_default(&path, "test-world")
-            .expect("save should load");
+        let loaded =
+            WorldStateFile::load_or_default(&path, "test-world").expect("save should load");
 
         assert_eq!(loaded.bodies.len(), 1);
         assert_eq!(loaded.bodies["body-a"].translation_m, [1.0, 2.0, 3.0]);
@@ -275,7 +278,11 @@ mod tests {
         let loaded = WorldStateFile::load_or_default(&path, "test-world")
             .expect("valid backup should be used");
         assert_eq!(loaded.bodies.len(), 1);
-        assert!(std::fs::read_to_string(&path).unwrap().contains("invalid json"));
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("invalid json")
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&backup);

@@ -58,7 +58,10 @@ pub fn validate_all(
 
     let camera = &engine.camera;
     ensure!(
-        camera.spawn_position_m.iter().all(|value| value.is_finite()),
+        camera
+            .spawn_position_m
+            .iter()
+            .all(|value| value.is_finite()),
         "camera.spawn_position_m must contain only finite values"
     );
     ensure!(camera.yaw_degrees.is_finite(), "camera yaw must be finite");
@@ -94,7 +97,10 @@ pub fn validate_all(
         "key light rotation must contain only finite values"
     );
 
-    ensure!(!materials.materials.is_empty(), "material catalogue is empty");
+    ensure!(
+        !materials.materials.is_empty(),
+        "material catalogue is empty"
+    );
     for (id, material) in &materials.materials {
         ensure!(!id.trim().is_empty(), "material ids cannot be empty");
         ensure!(
@@ -120,7 +126,10 @@ pub fn validate_all(
         "component catalogue is empty"
     );
     for (id, definition) in &components.definitions {
-        ensure!(!id.trim().is_empty(), "component definition ids cannot be empty");
+        ensure!(
+            !id.trim().is_empty(),
+            "component definition ids cannot be empty"
+        );
         ensure!(
             materials.materials.contains_key(&definition.material),
             "component definition '{id}' references unknown material '{}'",
@@ -145,7 +154,10 @@ pub fn validate_all(
 
     let mut ids = HashSet::with_capacity(world.objects.len());
     for instance in &world.objects {
-        ensure!(!instance.id.trim().is_empty(), "instance ids cannot be empty");
+        ensure!(
+            !instance.id.trim().is_empty(),
+            "instance ids cannot be empty"
+        );
         ensure!(
             ids.insert(instance.id.as_str()),
             "duplicate world instance id '{}'",
@@ -163,7 +175,10 @@ pub fn validate_all(
             instance.id
         );
         ensure!(
-            instance.rotation_degrees_xyz.iter().all(|value| value.is_finite()),
+            instance
+                .rotation_degrees_xyz
+                .iter()
+                .all(|value| value.is_finite()),
             "world instance '{}' rotation must contain only finite values",
             instance.id
         );
