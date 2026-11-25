@@ -64,13 +64,76 @@ jobs:
         shell: pwsh
         run: ./scripts/package.ps1
 
-      - name: Verify portable package layout
+      - name: Verify portable package layout and world catalog
         shell: pwsh
         run: |
-          $root = "./dist/physics_sandbox"
-          foreach ($path in @("physics_sandbox.exe", "data/engine.json", "data/materials.json", "data/components.json", "assets", "mods", "worlds/sandbox/world.json")) {
-            if (-not (Test-Path (Join-Path $root $path))) {
-              throw "Portable package is missing: $path"
+          $root = (Resolve-Path "./dist/physics_sandbox").Path
+          $requiredFiles = @(
+            "physics_sandbox.exe",
+            "data/engine.json",
+            "data/materials.json",
+            "data/components.json",
+            "worlds/catalog.json",
+            "worlds/sandbox/world.json",
+            "worlds/character_studio/world.json",
+            "worlds/character_studio/data/editor/workspace.json",
+            "worlds/character_studio/data/rigs/human.rig.json",
+            "worlds/character_studio/outputs/species/human.species.json",
+            "worlds/character_studio/outputs/actions/human.locomotion.actions.json"
+          )
+          foreach ($path in $requiredFiles) {
+            $candidate = Join-Path $root $path
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+              throw "Portable package is missing required file: $path"
+            }
+          }
+
+          $requiredDirectories = @(
+            "assets",
+            "mods",
+            "worlds/sandbox/outputs",
+            "worlds/character_studio/assets",
+            "worlds/character_studio/outputs"
+          )
+          foreach ($path in $requiredDirectories) {
+            $candidate = Join-Path $root $path
+            if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+              throw "Portable package is missing required directory: $path"
+            }
+          }
+
+          $catalog = Get-Content -LiteralPath (Join-Path $root "worlds/catalog.json") -Raw | ConvertFrom-Json
+          if ($catalog.schema_version -ne 1) {
+            throw "Unsupported world catalog schema in portable package"
+          }
+          $worldIds = @($catalog.worlds | ForEach-Object { $_.id })
+          foreach ($requiredId in @("sandbox", "character_studio")) {
+            if ($worldIds -notcontains $requiredId) {
+              throw "Portable world catalog is missing required world: $requiredId"
+            }
+          }
+
+          foreach ($world in $catalog.worlds) {
+            foreach ($field in @("manifest", "data", "assets", "outputs")) {
+              $relative = [string]$world.$field
+              $parts = $relative -split "/"
+              if (
+                [string]::IsNullOrWhiteSpace($relative) -or
+                [System.IO.Path]::IsPathRooted($relative) -or
+                $relative.IndexOf([char]92) -ge 0 -or
+                $parts -contains "." -or
+                $parts -contains ".." -or
+                $parts -contains ""
+              ) {
+                throw "World '$($world.id)' has an unsafe '$field' path: $relative"
+              }
+
+              $candidate = Join-Path $root $relative
+              $isManifest = $field -eq "manifest"
+              $pathType = if ($isManifest) { "Leaf" } else { "Container" }
+              if (-not (Test-Path -LiteralPath $candidate -PathType $pathType)) {
+                throw "World '$($world.id)' catalog path does not exist: $relative"
+              }
             }
           }
 
