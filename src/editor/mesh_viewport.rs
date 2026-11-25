@@ -248,6 +248,37 @@ pub(super) fn interact_with_meshes(
         state.selection.clear();
     }
 
+    let mut grid_steps = [0_i8; 3];
+    if keys.just_pressed(KeyCode::ArrowRight) {
+        grid_steps[0] += 1;
+    }
+    if keys.just_pressed(KeyCode::ArrowLeft) {
+        grid_steps[0] -= 1;
+    }
+    if keys.just_pressed(KeyCode::ArrowUp) {
+        grid_steps[1] += 1;
+    }
+    if keys.just_pressed(KeyCode::ArrowDown) {
+        grid_steps[1] -= 1;
+    }
+    if keys.just_pressed(KeyCode::PageUp) {
+        grid_steps[2] += 1;
+    }
+    if keys.just_pressed(KeyCode::PageDown) {
+        grid_steps[2] -= 1;
+    }
+    if grid_steps != [0, 0, 0] {
+        if let Err(error) = translate_selected_elements_by_grid(
+            &active_world,
+            &mut workspace,
+            &state,
+            grid_steps,
+        ) {
+            warn!("Could not move the current mesh selection: {error:#}");
+        }
+        return;
+    }
+
     if keys.just_pressed(KeyCode::Delete) {
         if let Err(error) = delete_selected_elements(&active_world, &mut workspace, &mut state) {
             warn!("Could not delete the current mesh selection: {error:#}");
@@ -580,6 +611,118 @@ fn ray_plane_intersection(
     (distance >= 0.0 && distance.is_finite()).then_some(ray_origin + direction * distance)
 }
 
+fn construction_plane_axes(
+    workspace: &CharacterStudioWorkspace,
+) -> Option<(Vec3, Vec3, Vec3)> {
+    let normal = Vec3::from_array(
+        workspace
+            .construction_plane_normal_world
+            .map(|component| component as f32),
+    )
+    .normalize_or_zero();
+    if normal == Vec3::ZERO {
+        return None;
+    }
+
+    let reference = if normal.y.abs() < 0.95 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
+    let tangent = normal.cross(reference).normalize_or_zero();
+    let bitangent = normal.cross(tangent).normalize_or_zero();
+    (tangent != Vec3::ZERO && bitangent != Vec3::ZERO)
+        .then_some((tangent, bitangent, normal))
+}
+
+fn grid_step_offset(
+    workspace: &CharacterStudioWorkspace,
+    steps: [i8; 3],
+) -> Option<Vec3> {
+    let (tangent, bitangent, normal) = construction_plane_axes(workspace)?;
+    let spacing = workspace.construction_plane_grid_spacing_m as f32;
+    if !spacing.is_finite() || spacing <= 0.0 || steps == [0, 0, 0] {
+        return None;
+    }
+
+    let offset = (tangent * f32::from(steps[0])
+        + bitangent * f32::from(steps[1])
+        + normal * f32::from(steps[2]))
+        * spacing;
+    (offset.is_finite() && offset != Vec3::ZERO).then_some(offset)
+}
+
+fn translate_selected_elements_by_grid(
+    active_world: &ActiveWorld,
+    workspace: &mut CharacterStudioWorkspace,
+    state: &MeshViewportState,
+    steps: [i8; 3],
+) -> Result<()> {
+    ensure!(
+        !state.selection.is_empty(),
+        "select mesh elements before moving with the arrow keys"
+    );
+    let offset = grid_step_offset(workspace, steps)
+        .context("construction-plane grid spacing or orientation is invalid")?;
+
+    let document_id = state
+        .active_document_id
+        .as_deref()
+        .context("no active mesh document is selected")?;
+    let document_index = workspace
+        .mesh_documents
+        .iter()
+        .position(|document| document.id == document_id)
+        .context("active mesh document is not loaded")?;
+    let previous = workspace.mesh_documents[document_index].clone();
+
+    let mut vertex_ids = Vec::new();
+    let mut seen_vertex_ids = HashSet::new();
+    for selected in &state.selection {
+        match selected {
+            SelectedMeshElement::Vertex(id) => {
+                if seen_vertex_ids.insert(id.as_str()) {
+                    vertex_ids.push(id.clone());
+                }
+            }
+            SelectedMeshElement::Edge(id) => {
+                let edge = previous
+                    .edges
+                    .iter()
+                    .find(|edge| edge.id == *id)
+                    .with_context(|| format!("selected edge '{id}' no longer exists"))?;
+                for vertex_id in &edge.vertices {
+                    if seen_vertex_ids.insert(vertex_id.as_str()) {
+                        vertex_ids.push(vertex_id.clone());
+                    }
+                }
+            }
+            SelectedMeshElement::Face(id) => {
+                let face = previous
+                    .faces
+                    .iter()
+                    .find(|face| face.id == *id)
+                    .with_context(|| format!("selected face '{id}' no longer exists"))?;
+                for vertex_id in &face.vertices {
+                    if seen_vertex_ids.insert(vertex_id.as_str()) {
+                        vertex_ids.push(vertex_id.clone());
+                    }
+                }
+            }
+        }
+    }
+    ensure!(
+        !vertex_ids.is_empty(),
+        "the current selection does not reference any vertices"
+    );
+
+    let mut updated = previous.clone();
+    updated.translate_vertices(&vertex_ids, offset.to_array().map(f64::from))?;
+    persist_mesh_document(active_world, workspace, &previous, &updated)?;
+    workspace.mesh_documents[document_index] = updated;
+    Ok(())
+}
+
 fn delete_selected_elements(
     active_world: &ActiveWorld,
     workspace: &mut CharacterStudioWorkspace,
@@ -785,26 +928,9 @@ fn draw_construction_plane_grid(
             .construction_plane_origin_m
             .map(|component| component as f32),
     );
-    let normal = Vec3::from_array(
-        workspace
-            .construction_plane_normal_world
-            .map(|component| component as f32),
-    )
-    .normalize_or_zero();
-    if normal == Vec3::ZERO {
+    let Some((tangent, bitangent, _normal)) = construction_plane_axes(workspace) else {
         return;
-    }
-
-    let reference = if normal.y.abs() < 0.95 {
-        Vec3::Y
-    } else {
-        Vec3::X
     };
-    let tangent = normal.cross(reference).normalize_or_zero();
-    let bitangent = normal.cross(tangent).normalize_or_zero();
-    if tangent == Vec3::ZERO || bitangent == Vec3::ZERO {
-        return;
-    }
 
     let spacing = workspace.construction_plane_grid_spacing_m as f32;
     let extent = workspace.construction_plane_grid_extent_m as f32;
@@ -934,7 +1060,38 @@ pub(super) fn draw_mesh_overlay(
 mod tests {
     use bevy::math::Vec3;
 
-    use super::{ray_plane_intersection, ray_segment_distance, ray_triangle_distance};
+    use super::{
+        construction_plane_axes, grid_step_offset, ray_plane_intersection,
+        ray_segment_distance, ray_triangle_distance,
+    };
+    use crate::editor::CharacterStudioWorkspace;
+
+    #[test]
+    fn construction_plane_axes_are_orthonormal_and_follow_authored_normal() {
+        let mut workspace = CharacterStudioWorkspace::default();
+        workspace.construction_plane_normal_world = [0.0, 0.0, 4.0];
+
+        let (tangent, bitangent, normal) = construction_plane_axes(&workspace).unwrap();
+        assert!((normal - Vec3::Z).length() < 1.0e-6);
+        assert!((tangent.length() - 1.0).abs() < 1.0e-6);
+        assert!((bitangent.length() - 1.0).abs() < 1.0e-6);
+        assert!(tangent.dot(bitangent).abs() < 1.0e-6);
+        assert!(tangent.dot(normal).abs() < 1.0e-6);
+        assert!(bitangent.dot(normal).abs() < 1.0e-6);
+        assert!(tangent.cross(bitangent).dot(normal) > 0.999);
+    }
+
+    #[test]
+    fn grid_step_translation_uses_authored_spacing_and_plane_axes() {
+        let mut workspace = CharacterStudioWorkspace::default();
+        workspace.construction_plane_normal_world = [0.0, 0.0, 1.0];
+        workspace.construction_plane_grid_spacing_m = 0.5;
+
+        let offset = grid_step_offset(&workspace, [1, -1, 1]).unwrap();
+        let expected = Vec3::new(0.5, 0.5, 0.5);
+        assert!((offset - expected).length() < 1.0e-6);
+        assert!(grid_step_offset(&workspace, [0, 0, 0]).is_none());
+    }
 
     #[test]
     fn ray_triangle_pick_reports_nearest_forward_hit_only() {
