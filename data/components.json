@@ -5,65 +5,101 @@
       "body_type": "static",
       "collider": {
         "kind": "cuboid",
-        "half_extents": [20.0, 0.5, 20.0]
+        "half_extents": [
+          20,
+          0.5,
+          20
+        ]
       },
       "material": "concrete",
-      "enable_swept_ccd": false,
       "visual": {
         "model": null,
-        "color_srgba": [0.34, 0.37, 0.40, 1.0],
+        "color_srgba": [
+          0.34,
+          0.37,
+          0.4,
+          1
+        ],
         "perceptual_roughness": 0.92,
-        "metallic": 0.0,
+        "metallic": 0,
         "alpha_mode": "opaque"
-      }
+      },
+      "swept_ccd": null
     },
     "primitive.steel_block": {
       "body_type": "dynamic",
       "collider": {
         "kind": "cuboid",
-        "half_extents": [0.25, 0.25, 0.25]
+        "half_extents": [
+          0.25,
+          0.25,
+          0.25
+        ]
       },
       "material": "structural_steel",
-      "enable_swept_ccd": true,
       "visual": {
         "model": null,
-        "color_srgba": [0.55, 0.59, 0.64, 1.0],
+        "color_srgba": [
+          0.55,
+          0.59,
+          0.64,
+          1
+        ],
         "perceptual_roughness": 0.28,
         "metallic": 0.82,
         "alpha_mode": "opaque"
+      },
+      "swept_ccd": {
+        "filter": "all",
+        "mode": "non_linear",
+        "threshold": 0.5
       }
     },
     "primitive.timber_crate": {
       "body_type": "dynamic",
       "collider": {
         "kind": "cuboid",
-        "half_extents": [0.35, 0.35, 0.35]
+        "half_extents": [
+          0.35,
+          0.35,
+          0.35
+        ]
       },
       "material": "timber",
-      "enable_swept_ccd": true,
       "visual": {
         "model": null,
-        "color_srgba": [0.48, 0.29, 0.15, 1.0],
+        "color_srgba": [
+          0.48,
+          0.29,
+          0.15,
+          1
+        ],
         "perceptual_roughness": 0.86,
-        "metallic": 0.0,
+        "metallic": 0,
         "alpha_mode": "opaque"
-      }
+      },
+      "swept_ccd": null
     },
     "primitive.rubber_sphere": {
       "body_type": "dynamic",
       "collider": {
         "kind": "sphere",
-        "radius": 0.30
+        "radius": 0.3
       },
       "material": "rubber",
-      "enable_swept_ccd": true,
       "visual": {
         "model": null,
-        "color_srgba": [0.12, 0.24, 0.31, 1.0],
+        "color_srgba": [
+          0.12,
+          0.24,
+          0.31,
+          1
+        ],
         "perceptual_roughness": 0.48,
         "metallic": 0.02,
         "alpha_mode": "opaque"
-      }
+      },
+      "swept_ccd": null
     }
   }
 }

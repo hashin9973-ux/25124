@@ -27,7 +27,7 @@ This is the first definition/instance boundary. Nested assemblies, dependency-re
 - Bevy 0.20.1 with Avian 0.8.0.
 - SI-style world scale: one world unit is one metre, velocities are metres/second, gravity is metres/second², and material density is kg/m³.
 - Fixed 120 Hz physics schedule with eight solver substeps.
-- Static and dynamic rigid bodies with shape-derived mass properties, data-defined density, static/dynamic friction, restitution, and per-component swept-CCD configuration.
+- Static and dynamic rigid bodies with shape-derived mass properties, data-defined density, static/dynamic friction, restitution, and optional per-definition swept-CCD overrides.
 - Cuboid, sphere, and capsule colliders. Primitive render meshes are generated from the same dimensions used by the colliders.
 - Reusable mesh and primitive-material handles are shared for identical definitions in the loaded world.
 - Avian collision-start/end counters plus an active-pair set synchronized from Avian's current touching-contact data.
@@ -75,7 +75,7 @@ The camera is intentionally a non-physical editor/spectator camera; it is not a 
 
 - `data/engine.json`: versioned engine-level physics, camera, and lighting defaults.
 - `data/materials.json`: versioned physical material catalogue. Density is kg/m³; friction coefficients are dimensionless.
-- `data/components.json`: versioned reusable component definitions containing body type, collider, material reference, CCD setting, and visual reference.
+- `data/components.json`: versioned reusable component definitions containing body type, collider, material reference, optional CCD filter/mode/threshold override, and visual reference.
 - `worlds/<world>/world.json`: versioned world composition. Each object has a unique instance ID, a component-definition reference, and an SI transform.
 - `assets/`: paths referenced by `visual.model` are relative to this directory. glTF scene selectors such as `models/part.glb#Scene0` are supported by the AssetServer.
 - `worlds/<world>/state.json`: generated runtime state; it is not committed by default.
@@ -84,7 +84,7 @@ For a cuboid, `half_extents` describe the collision half-size in metres. The gen
 
 Current visual alpha modes are explicit: `opaque` requires alpha 1.0, while `blend` uses the authored alpha channel. Transparent materials can have different sorting and depth behavior from opaque materials.
 
-The current friction values are approximations. Avian combines collider coefficients according to its configured combine rule; the foundation has not yet introduced a pairwise material-interaction registry. This is an intentional next physics-model extension, not a claim that friction is a universal material constant.
+The current friction values are approximations. Avian combines collider coefficients according to its configured combine rule; the foundation has not yet introduced a pairwise material-interaction registry. Fast-moving dynamic bodies use Avian's automatic swept-CCD behavior against static and kinematic targets when no override is authored. An optional `swept_ccd` component definition can override the target filter, sweep mode, and threshold. This is an intentional next physics-model extension, not a claim that friction is a universal material constant.
 
 ## Validation
 

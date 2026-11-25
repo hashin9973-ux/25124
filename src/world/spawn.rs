@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use avian3d::prelude::{
-    AngularVelocity, Collider, ColliderDensity, CollisionEventsEnabled, Friction, LinearVelocity,
-    Restitution, RigidBody, SweptCcd,
+    AngularVelocity, CcdFilter, Collider, ColliderDensity, CollisionEventsEnabled, Friction,
+    LinearVelocity, Restitution, RigidBody, SweepMode, SweptCcd,
 };
 use bevy::prelude::*;
 
 use crate::{
     config::{
-        AlphaMode, BodyType, ColliderShape, ComponentDefinition, RuntimeConfig, VisualDefinition,
+        AlphaMode, BodyType, CcdFilterDefinition, ColliderShape, ComponentDefinition, RuntimeConfig,
+        SweepModeDefinition, VisualDefinition,
     },
     persistence::{PersistentObjectId, WorldStateFile},
 };
@@ -76,8 +77,22 @@ pub(super) fn spawn_world(
             },
         ));
 
-        if definition.enable_swept_ccd {
-            entity.insert(SweptCcd::default());
+        if let Some(ccd) = &definition.swept_ccd {
+            let filter = match ccd.filter {
+                CcdFilterDefinition::Default => CcdFilter::DEFAULT,
+                CcdFilterDefinition::Dynamic => CcdFilter::DYNAMIC,
+                CcdFilterDefinition::All => CcdFilter::ALL,
+                CcdFilterDefinition::None => CcdFilter::NONE,
+            };
+            let mode = match ccd.mode {
+                SweepModeDefinition::Linear => SweepMode::Linear,
+                SweepModeDefinition::NonLinear => SweepMode::NonLinear,
+            };
+            entity.insert(SweptCcd {
+                filter,
+                mode,
+                threshold: ccd.threshold,
+            });
         }
 
         add_visual(

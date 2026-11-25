@@ -137,10 +137,16 @@ pub fn validate_all(
         );
         validate_collider(&definition.collider, id)?;
         validate_visual(&definition.visual, id)?;
-        ensure!(
-            !definition.enable_swept_ccd || matches!(definition.body_type, BodyType::Dynamic),
-            "static component definition '{id}' cannot enable swept CCD"
-        );
+        if let Some(ccd) = &definition.swept_ccd {
+            ensure!(
+                matches!(definition.body_type, BodyType::Dynamic),
+                "static component definition '{id}' cannot configure swept CCD"
+            );
+            ensure!(
+                ccd.threshold.is_finite() && (0.0..=1.0).contains(&ccd.threshold),
+                "component definition '{id}' swept CCD threshold must be finite and in [0, 1]"
+            );
+        }
     }
 
     ensure!(!world.id.trim().is_empty(), "world id cannot be empty");

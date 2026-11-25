@@ -68,8 +68,32 @@ pub struct ComponentDefinition {
     pub body_type: BodyType,
     pub collider: ColliderShape,
     pub material: String,
-    pub enable_swept_ccd: bool,
+    pub swept_ccd: Option<SweptCcdDefinition>,
     pub visual: VisualDefinition,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum CcdFilterDefinition {
+    Default,
+    Dynamic,
+    All,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum SweepModeDefinition {
+    Linear,
+    NonLinear,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SweptCcdDefinition {
+    pub filter: CcdFilterDefinition,
+    pub mode: SweepModeDefinition,
+    pub threshold: f32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
