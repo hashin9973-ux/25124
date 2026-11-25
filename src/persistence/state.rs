@@ -36,42 +36,40 @@ impl WorldStateFile {
     }
 
     pub fn load_or_default(path: &Path, expected_world_id: &str) -> Result<Self> {
+        let previous_path = previous_path(path);
         let backup_path = backup_path(path);
         let primary_result = load_valid_state(path, expected_world_id);
+        let recover = || load_recovery_state([&previous_path, &backup_path], expected_world_id);
 
         match primary_result {
             Ok(Some(state)) => Ok(state),
-            Ok(None) => match load_valid_state(&backup_path, expected_world_id)? {
-                Some(state) => {
+            Ok(None) => match recover()? {
+                Some((state, recovered_from)) => {
                     eprintln!(
-                        "Warning: recovered world '{}' from backup '{}'",
+                        "Warning: recovered world '{}' from save recovery file '{}'",
                         expected_world_id,
-                        backup_path.display()
+                        recovered_from.display()
                     );
                     Ok(state)
                 }
                 None => Ok(Self::new(expected_world_id.to_owned())),
             },
-            Err(primary_error) if backup_path.is_file() => {
-                match load_valid_state(&backup_path, expected_world_id) {
-                    Ok(Some(state)) => {
-                        eprintln!(
-                            "Warning: primary save '{}' is invalid; recovered world '{}' from backup '{}'. The primary file was preserved.",
-                            path.display(),
-                            expected_world_id,
-                            backup_path.display()
-                        );
-                        Ok(state)
-                    }
-                    Ok(None) => Err(primary_error),
-                    Err(backup_error) => Err(anyhow!(
-                        "primary save '{}' is invalid ({primary_error:#}); backup '{}' is also invalid ({backup_error:#})",
+            Err(primary_error) => match recover() {
+                Ok(Some((state, recovered_from))) => {
+                    eprintln!(
+                        "Warning: primary save '{}' is invalid; recovered world '{}' from '{}'. The primary file was preserved.",
                         path.display(),
-                        backup_path.display()
-                    )),
+                        expected_world_id,
+                        recovered_from.display()
+                    );
+                    Ok(state)
                 }
-            }
-            Err(error) => Err(error),
+                Ok(None) => Err(primary_error),
+                Err(recovery_error) => Err(anyhow!(
+                    "primary save '{}' is invalid ({primary_error:#}); recovery files are also invalid ({recovery_error:#})",
+                    path.display()
+                )),
+            },
         }
     }
 
@@ -146,6 +144,40 @@ enum ReplaceStage {
     PrimaryCommitted,
 }
 
+fn load_recovery_state(
+    candidates: [&Path; 2],
+    expected_world_id: &str,
+) -> Result<Option<(WorldStateFile, PathBuf)>> {
+    let mut errors = Vec::new();
+
+    for candidate in candidates {
+        match load_valid_state(candidate, expected_world_id) {
+            Ok(Some(state)) => return Ok(Some((state, candidate.to_owned()))),
+            Ok(None) => {}
+            Err(error) => errors.push(format!("'{}': {error:#}", candidate.display())),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(None)
+    } else {
+        Err(anyhow!(
+            "no valid recovery save was found ({})",
+            errors.join("; ")
+        ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplaceStage {
+    TempSynced,
+    PreviousSynced,
+    PreviousCommitted,
+    PrimaryRemoved,
+    PrimaryCommitted,
+    BackupCommitted,
+}
+
 fn atomic_replace(path: &Path, contents: &[u8], expected_world_id: &str) -> Result<()> {
     atomic_replace_with_hook(path, contents, expected_world_id, |_| Ok(()))
 }
@@ -164,8 +196,9 @@ where
         .with_context(|| format!("could not create save directory '{}'", parent.display()))?;
 
     let temp_path = temp_path(path);
+    let previous_path = previous_path(path);
+    let previous_temp_path = previous_temp_path(path);
     let backup_path = backup_path(path);
-    let backup_temp_path = backup_temp_path(path);
 
     {
         let mut file = File::create(&temp_path).with_context(|| {
@@ -177,7 +210,7 @@ where
             .with_context(|| format!("could not flush temporary save '{}'", temp_path.display()))?;
     }
 
-    // Never replace the current save with bytes that the loader would reject.
+    // Validate the replacement before touching any existing recovery candidate.
     ensure!(
         load_valid_state(&temp_path, expected_world_id)?.is_some(),
         "temporary save '{}' could not be validated",
@@ -186,79 +219,76 @@ where
     sync_directory(parent)?;
     after_stage(ReplaceStage::TempSynced)?;
 
-    // Rotate only a validated primary. If the primary is corrupt but the backup is
-    // recoverable, leave that backup untouched throughout the replacement.
     let primary_is_valid = matches!(
         load_valid_state(path, expected_world_id),
         Ok(Some(_))
     );
 
     if primary_is_valid {
-        if backup_temp_path.exists() {
-            fs::remove_file(&backup_temp_path).with_context(|| {
+        if previous_temp_path.exists() {
+            fs::remove_file(&previous_temp_path).with_context(|| {
                 format!(
-                    "could not remove stale temporary backup '{}'",
-                    backup_temp_path.display()
+                    "could not remove stale previous-save temporary '{}'",
+                    previous_temp_path.display()
                 )
             })?;
         }
 
-        fs::copy(path, &backup_temp_path).with_context(|| {
+        fs::copy(path, &previous_temp_path).with_context(|| {
             format!(
                 "could not stage current save '{}' as '{}'",
                 path.display(),
-                backup_temp_path.display()
+                previous_temp_path.display()
             )
         })?;
-        File::open(&backup_temp_path)
+        File::open(&previous_temp_path)
             .with_context(|| {
                 format!(
-                    "could not open staged backup '{}'",
-                    backup_temp_path.display()
+                    "could not open staged previous save '{}'",
+                    previous_temp_path.display()
                 )
             })?
             .sync_all()
             .with_context(|| {
                 format!(
-                    "could not flush staged backup '{}'",
-                    backup_temp_path.display()
+                    "could not flush staged previous save '{}'",
+                    previous_temp_path.display()
                 )
             })?;
         ensure!(
-            load_valid_state(&backup_temp_path, expected_world_id)?.is_some(),
-            "staged backup '{}' could not be validated",
-            backup_temp_path.display()
+            load_valid_state(&previous_temp_path, expected_world_id)?.is_some(),
+            "staged previous save '{}' could not be validated",
+            previous_temp_path.display()
         );
         sync_directory(parent)?;
-        after_stage(ReplaceStage::BackupSynced)?;
+        after_stage(ReplaceStage::PreviousSynced)?;
 
-        // The primary is still valid here, so replacing an older backup cannot
-        // destroy the last recoverable copy if the process stops mid-rotation.
-        if backup_path.exists() {
-            fs::remove_file(&backup_path).with_context(|| {
+        // The current primary remains in place until the staged copy is durable.
+        // The .bak generation is deliberately not modified at this stage.
+        if previous_path.exists() {
+            fs::remove_file(&previous_path).with_context(|| {
                 format!(
-                    "could not remove old save backup '{}'",
-                    backup_path.display()
+                    "could not remove stale previous save '{}'",
+                    previous_path.display()
                 )
             })?;
         }
-        fs::rename(&backup_temp_path, &backup_path).with_context(|| {
+        fs::rename(&previous_temp_path, &previous_path).with_context(|| {
             format!(
-                "could not commit staged backup '{}' as '{}'",
-                backup_temp_path.display(),
-                backup_path.display()
+                "could not commit staged previous save '{}' as '{}'",
+                previous_temp_path.display(),
+                previous_path.display()
             )
         })?;
         sync_directory(parent)?;
-        after_stage(ReplaceStage::BackupCommitted)?;
+        after_stage(ReplaceStage::PreviousCommitted)?;
     }
 
-    // Rust's rename does not replace an existing destination on every platform.
-    // At this point either the old primary is safely backed up, or the pre-existing
-    // valid backup (if any) has deliberately been preserved.
+    // On Windows, rename does not replace an existing destination. Before removing
+    // the primary, either a validated .prev copy exists or an older .bak is preserved.
     if path.exists() {
         fs::remove_file(path)
-            .with_context(|| format!("could not remove previous save '{}'", path.display()))?;
+            .with_context(|| format!("could not remove previous primary save '{}'", path.display()))?;
         sync_directory(parent)?;
     }
     after_stage(ReplaceStage::PrimaryRemoved)?;
@@ -268,6 +298,27 @@ where
     sync_directory(parent)?;
     after_stage(ReplaceStage::PrimaryCommitted)?;
 
+    // Rotate the staged previous primary into .bak only after the new primary is
+    // committed. If .prev came from an earlier interrupted write, the same rule applies.
+    if matches!(
+        load_valid_state(&previous_path, expected_world_id),
+        Ok(Some(_))
+    ) {
+        if backup_path.exists() {
+            fs::remove_file(&backup_path)
+                .with_context(|| format!("could not remove old save backup '{}'", backup_path.display()))?;
+        }
+        fs::rename(&previous_path, &backup_path).with_context(|| {
+            format!(
+                "could not rotate previous save '{}' into backup '{}'",
+                previous_path.display(),
+                backup_path.display()
+            )
+        })?;
+        sync_directory(parent)?;
+        after_stage(ReplaceStage::BackupCommitted)?;
+    }
+
     Ok(())
 }
 
@@ -275,12 +326,16 @@ fn temp_path(path: &Path) -> PathBuf {
     path.with_extension("json.tmp")
 }
 
-fn backup_path(path: &Path) -> PathBuf {
-    path.with_extension("json.bak")
+fn previous_path(path: &Path) -> PathBuf {
+    path.with_extension("json.prev")
 }
 
-fn backup_temp_path(path: &Path) -> PathBuf {
-    path.with_extension("json.bak.tmp")
+fn previous_temp_path(path: &Path) -> PathBuf {
+    path.with_extension("json.prev.tmp")
+}
+
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
 }
 
 #[cfg(unix)]
@@ -301,8 +356,8 @@ fn sync_directory(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        PersistedBodyState, ReplaceStage, WorldStateFile, atomic_replace_with_hook,
-        backup_path, backup_temp_path, temp_path,
+        PersistedBodyState, ReplaceStage, WorldStateFile, atomic_replace_with_hook, backup_path,
+        previous_path, previous_temp_path, temp_path,
     };
     use anyhow::anyhow;
     use std::path::{Path, PathBuf};
@@ -321,9 +376,10 @@ mod tests {
     fn cleanup_save_files(path: &Path) {
         for candidate in [
             path.to_owned(),
-            backup_path(path),
             temp_path(path),
-            backup_temp_path(path),
+            previous_path(path),
+            previous_temp_path(path),
+            backup_path(path),
         ] {
             let _ = std::fs::remove_file(candidate);
         }
@@ -436,10 +492,11 @@ mod tests {
     fn interrupted_replacement_with_valid_primary_is_recoverable_at_every_stage() {
         let stages = [
             ReplaceStage::TempSynced,
-            ReplaceStage::BackupSynced,
-            ReplaceStage::BackupCommitted,
+            ReplaceStage::PreviousSynced,
+            ReplaceStage::PreviousCommitted,
             ReplaceStage::PrimaryRemoved,
             ReplaceStage::PrimaryCommitted,
+            ReplaceStage::BackupCommitted,
         ];
 
         for stage in stages {
@@ -459,7 +516,7 @@ mod tests {
             interrupt_write_at(&path, &replacement, stage);
 
             let recovered = WorldStateFile::load_or_default(&path, "test-world")
-                .expect("primary or backup must remain recoverable");
+                .expect("primary or recovery file must remain recoverable");
             assert!(
                 [
                     [1.0, 2.0, 3.0],
@@ -498,7 +555,7 @@ mod tests {
             interrupt_write_at(&path, &replacement, stage);
 
             let loaded = WorldStateFile::load_or_default(&path, "test-world")
-                .expect("interruption must leave a valid primary or backup");
+                .expect("interruption must leave a valid primary or recovery file");
             let expected_translation = if stage == ReplaceStage::PrimaryCommitted {
                 [9.0, 8.0, 7.0]
             } else {
@@ -519,5 +576,32 @@ mod tests {
 
             cleanup_save_files(&path);
         }
+    }
+
+    #[test]
+    fn staged_previous_save_is_recovered_before_older_backup() {
+        let path = unique_save_path("previous-recovery-order");
+        let previous = previous_path(&path);
+        let backup = backup_path(&path);
+        let mut newer_state = sample_state();
+        newer_state.bodies.get_mut("body-a").unwrap().translation_m = [4.0, 5.0, 6.0];
+        let older_state = sample_state();
+
+        std::fs::write(
+            &previous,
+            serde_json::to_vec(&newer_state).expect("previous state should serialize"),
+        )
+        .expect("previous state should be written");
+        std::fs::write(
+            &backup,
+            serde_json::to_vec(&older_state).expect("backup state should serialize"),
+        )
+        .expect("backup state should be written");
+
+        let recovered = WorldStateFile::load_or_default(&path, "test-world")
+            .expect("staged previous save should be recoverable");
+        assert_eq!(recovered.bodies["body-a"].translation_m, [4.0, 5.0, 6.0]);
+
+        cleanup_save_files(&path);
     }
 }
