@@ -52,7 +52,7 @@ The free-fly editor camera is non-physical. It is not a character controller.
 
 Character Studio is a separate, world-owned authoring workspace. Its checked-in world manifest contains no instances, its species index is empty, and its action-set index is empty. Opening it does not spawn a model, rig, ragdoll, floor, workbench or reference object.
 
-Choose **Create Species** in the world browser to create a persisted draft. The editor assigns a unique generic identifier, writes a species definition with no model or rig, and registers it in the studio's species index. It does not generate geometry, anatomical segments, joints, animations or actions. The draft is user-owned content and can be renamed as it is authored.
+Choose **Create Species** in the Character Studio viewport to create a persisted draft. The editor assigns a unique generic identifier, writes a species definition with no model or rig, and registers it in the studio's species index. It does not generate geometry, anatomical segments, joints, animations or actions. The draft is user-owned content and can be renamed as it is authored.
 
 A species definition is reusable content. Runtime characters are separate instances derived from a user-authored species. Rig definitions, action sets, visual assets and physical material definitions remain independently authored and referenced; the engine does not prescribe anatomy, body-part names or movement patterns.
 

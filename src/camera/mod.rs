@@ -1,5 +1,7 @@
 mod free_fly;
 
+pub(super) use free_fly::FreeFlyCamera;
+
 use bevy::prelude::*;
 
 use crate::editor::EditorScreen;

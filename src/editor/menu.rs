@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 
 use super::{
-    MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE, WorldBrowserPage,
-    WorldCatalog,
-    catalog::WorldKind,
+    MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE, WorldBrowserPage, WorldCatalog,
     water::{RippleField, spawn_water},
 };
 
@@ -192,21 +190,6 @@ fn build_world_browser_scene(
         camera_rotation(),
     );
 
-    if catalog
-        .worlds
-        .iter()
-        .any(|world| world.kind == WorldKind::CharacterStudio)
-    {
-        spawn_callout(
-            commands,
-            meshes,
-            &black,
-            "CREATE SPECIES",
-            Vec3::new(-9.0, 0.0, -2.0),
-            MenuAction::CreateSpecies,
-            camera_rotation(),
-        );
-    }
 }
 
 fn spawn_base_scene(

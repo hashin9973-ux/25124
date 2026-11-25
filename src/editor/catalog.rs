@@ -1436,25 +1436,27 @@ pub(super) fn process_menu_command(
             Ok(())
         }
         MenuAction::CreateSpecies => (|| {
+            ensure!(
+                active_world.kind == Some(WorldKind::CharacterStudio),
+                "species can only be created while Character Studio is active"
+            );
+            let active_id = active_world
+                .id
+                .as_deref()
+                .context("no active Character Studio world is selected")?;
             let studio = catalog
                 .worlds
                 .iter()
-                .find(|world| world.kind == WorldKind::CharacterStudio)
-                .cloned()
-                .context("Character Studio is not registered in the world catalog")?;
-            let species_id = create_species_for_world(&root.0, &studio)?;
-            info!("Created species draft '{species_id}' in Character Studio");
-            open_world(WorldOpenContext {
-                project_root: &root.0,
-                entry: &studio,
-                runtime_config: &mut runtime_config,
-                state_file: &mut state_file,
-                save_target: &mut save_target,
-                gravity: &mut gravity,
-                active_world: &mut active_world,
-                studio_workspace: &mut studio_workspace,
-                next_screen: &mut next_screen,
-            })
+                .find(|world| world.id == active_id && world.kind == WorldKind::CharacterStudio)
+                .context("active Character Studio world is missing from the catalog")?;
+            let species_id = create_species_for_world(&root.0, studio)?;
+            let data_dir = safe_project_path(&root.0, &studio.data)?;
+            *studio_workspace = CharacterStudioWorkspace::load(&root.0, &data_dir, &studio.id)?;
+            info!(
+                "Created species draft '{species_id}' in workspace '{}'",
+                studio_workspace.display_name
+            );
+            Ok(())
         })(),
         MenuAction::CreateWorld => {
             create_empty_world(&root.0, &mut catalog).and_then(|world| {

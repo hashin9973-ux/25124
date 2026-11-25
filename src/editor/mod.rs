@@ -1,5 +1,6 @@
 mod catalog;
 mod menu;
+mod studio;
 mod water;
 
 pub use catalog::{
@@ -95,7 +96,18 @@ impl Plugin for EditorPlugin {
             )
             .add_systems(
                 Update,
-                return_to_menu.run_if(in_state(EditorScreen::InWorld)),
+                (
+                    studio::ensure_studio_callouts,
+                    studio::interact_callouts,
+                    catalog::process_menu_command,
+                    return_to_menu,
+                )
+                    .chain()
+                    .run_if(in_state(EditorScreen::InWorld)),
+            )
+            .add_systems(
+                OnExit(EditorScreen::InWorld),
+                studio::despawn_studio_callouts,
             );
 
         if app.world().contains_resource::<WorldStateFile>() {
