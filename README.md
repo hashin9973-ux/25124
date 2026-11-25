@@ -18,7 +18,7 @@ worlds/     World compositions and per-world persistent state
 - **Instances:** `worlds/<world>/world.json` places component definitions into a world using unique instance IDs and poses.
 - **Materials:** `data/materials.json` defines intrinsic density and initial per-material friction/restitution coefficients.
 - **Visual assets:** `assets/` contains models, textures, audio, and effects referenced by definitions.
-- **Runtime state:** `worlds/<world>/state.json` stores saved instance transforms and velocities, separate from authored world composition.
+- **Runtime state:** `worlds/<world>/state.json` stores saved dynamic-instance transforms and velocities, separate from authored world composition. Static transforms remain manifest-owned; unresolved IDs are retained for later content recovery.
 
 This is the first definition/instance boundary. Nested assemblies, dependency-resolved content packages, hot reload, regional streaming, and runtime mod loading are intentionally future subsystems rather than partially implemented placeholders.
 
@@ -33,7 +33,7 @@ This is the first definition/instance boundary. Nested assemblies, dependency-re
 - Avian collision-start/end counters plus an active-pair set synchronized from Avian's current touching-contact data.
 - Optional glTF scene visuals loaded through Bevy's AssetServer. Imported scenes preserve their glTF-authored materials; primitive surface settings apply to engine-generated primitive visuals.
 - Non-physical free-fly camera: W/A/S/D, Space/Ctrl, Shift, and mouse look.
-- F5 saves instance transforms and linear/angular velocities. The state is loaded independently from authored configuration on the next launch.
+- F5 saves runtime transforms and linear/angular velocities for dynamic instances only. Static transforms remain authored in the world manifest. Unresolved saved IDs are warned about and retained across saves so temporarily unavailable content can recover its state.
 - Save loading validates and normalizes quaternions and attempts backup recovery when the primary save is invalid.
 - No AI, character, gameplay UI, or scenario-specific engine code.
 

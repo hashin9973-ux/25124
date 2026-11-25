@@ -216,6 +216,8 @@ fn validate_collider(collider: &ColliderShape, owner: &str) -> Result<()> {
             "component '{owner}' capsule dimensions are invalid"
         ),
     }
+
+    Ok(())
 }
 
 fn validate_visual(visual: &super::schema::VisualDefinition, owner: &str) -> Result<()> {
@@ -266,7 +268,17 @@ fn validate_asset_path(asset: &str) -> Result<()> {
         "model paths must be relative and use forward slashes"
     );
     if let Some(selector) = scene_selector {
-        ensure!(!selector.trim().is_empty(), "model scene selector is empty");
+        let scene_index = selector
+            .strip_prefix("Scene")
+            .ok_or_else(|| anyhow::anyhow!("model scene selector must use the form '#SceneN'"))?;
+        ensure!(
+            !scene_index.is_empty() && scene_index.bytes().all(|byte| byte.is_ascii_digit()),
+            "model scene selector must use the form '#SceneN'"
+        );
+        ensure!(
+            scene_index.parse::<usize>().is_ok(),
+            "model scene selector index is outside the supported range"
+        );
     }
 
     for component in asset_path.split('/') {
@@ -288,6 +300,40 @@ mod tests {
     use std::path::Path;
 
     use crate::config::RuntimeConfig;
+
+    #[test]
+    fn collider_validation_accepts_valid_shapes_and_rejects_invalid_dimensions() {
+        use super::validate_collider;
+        use crate::config::ColliderShape;
+
+        assert!(validate_collider(
+            &ColliderShape::Cuboid {
+                half_extents: [0.5, 0.5, 0.5]
+            },
+            "valid-cuboid"
+        ).is_ok());
+        assert!(validate_collider(&ColliderShape::Sphere { radius: 0.5 }, "valid-sphere").is_ok());
+        assert!(validate_collider(
+            &ColliderShape::Capsule {
+                radius: 0.25,
+                segment_length: 0.5
+            },
+            "valid-capsule"
+        ).is_ok());
+        assert!(validate_collider(&ColliderShape::Sphere { radius: 0.0 }, "invalid-sphere").is_err());
+    }
+
+    #[test]
+    fn model_scene_selectors_are_explicit_and_numeric() {
+        use super::validate_asset_path;
+
+        assert!(validate_asset_path("models/part.glb").is_ok());
+        assert!(validate_asset_path("models/part.glb#Scene0").is_ok());
+        assert!(validate_asset_path("models/part.glb#Scene12").is_ok());
+        assert!(validate_asset_path("models/part.glb#Scene").is_err());
+        assert!(validate_asset_path("models/part.glb#DefaultScene").is_err());
+        assert!(validate_asset_path("models/part.glb#Scene-1").is_err());
+    }
 
     #[test]
     fn checked_in_data_and_world_are_valid_without_reading_user_save_data() {

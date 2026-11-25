@@ -2,7 +2,7 @@ mod state;
 
 pub use state::WorldStateFile;
 
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
@@ -11,6 +11,10 @@ use crate::persistence::state::PersistedBodyState;
 
 #[derive(Component, Clone, Debug)]
 pub struct PersistentObjectId(pub String);
+
+/// Marks bodies whose runtime transform and velocities override authored world placement.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct PersistRuntimeState;
 
 #[derive(Resource, Clone, Debug)]
 pub struct WorldSaveTarget {
@@ -29,18 +33,39 @@ impl Plugin for PersistencePlugin {
 fn save_world_on_f5(
     keys: Res<ButtonInput<KeyCode>>,
     target: Res<WorldSaveTarget>,
-    bodies: Query<(
-        &PersistentObjectId,
-        &Transform,
-        &LinearVelocity,
-        &AngularVelocity,
-    )>,
+    config: Res<crate::config::RuntimeConfig>,
+    previous_state: Res<WorldStateFile>,
+    bodies: Query<
+        (
+            &PersistentObjectId,
+            &Transform,
+            &LinearVelocity,
+            &AngularVelocity,
+        ),
+        With<PersistRuntimeState>,
+    >,
 ) {
     if !keys.just_pressed(KeyCode::F5) {
         return;
     }
 
+    let known_instance_ids = config
+        .world
+        .objects
+        .iter()
+        .map(|instance| instance.id.as_str())
+        .collect::<HashSet<_>>();
+
+    // Preserve unresolved records so temporarily unavailable content can be restored later.
+    // Known static-body records are deliberately omitted: static placement belongs to the manifest.
     let mut snapshot = WorldStateFile::new(target.world_id.clone());
+    snapshot.bodies = previous_state
+        .bodies
+        .iter()
+        .filter(|(id, _)| !known_instance_ids.contains(id.as_str()))
+        .map(|(id, state)| (id.clone(), state.clone()))
+        .collect();
+
     for (id, transform, linear_velocity, angular_velocity) in &bodies {
         snapshot.bodies.insert(
             id.0.clone(),
@@ -55,7 +80,7 @@ fn save_world_on_f5(
 
     match snapshot.write_atomic(&target.state_path) {
         Ok(()) => info!(
-            "Saved {} rigid bodies to '{}'",
+            "Saved {} runtime body states (plus unresolved records) to '{}'",
             snapshot.bodies.len(),
             target.state_path.display()
         ),
@@ -63,5 +88,40 @@ fn save_world_on_f5(
             "Could not save world state to '{}': {error:#}",
             target.state_path.display()
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, HashSet};
+
+    use super::super::{PersistedBodyState, WorldStateFile};
+
+    #[test]
+    fn save_snapshot_preserves_only_records_not_owned_by_current_world_instances() {
+        let mut previous = WorldStateFile::new("test-world".to_owned());
+        for id in ["dynamic", "static", "unresolved-mod-object"] {
+            previous.bodies.insert(
+                id.to_owned(),
+                PersistedBodyState {
+                    translation_m: [1.0, 2.0, 3.0],
+                    rotation_xyzw: [0.0, 0.0, 0.0, 1.0],
+                    linear_velocity_m_s: [0.0; 3],
+                    angular_velocity_rad_s: [0.0; 3],
+                },
+            );
+        }
+
+        let known_instance_ids = HashSet::from(["dynamic", "static"]);
+        let unresolved: BTreeMap<_, _> = previous
+            .bodies
+            .iter()
+            .filter(|(id, _)| !known_instance_ids.contains(id.as_str()))
+            .map(|(id, state)| (id.clone(), state.clone()))
+            .collect();
+
+        assert_eq!(unresolved.len(), 1);
+        assert!(unresolved.contains_key("unresolved-mod-object"));
+        assert!(!unresolved.contains_key("static"));
     }
 }

@@ -4,14 +4,14 @@ use avian3d::prelude::{
     AngularVelocity, CcdFilter, Collider, ColliderDensity, CollisionEventsEnabled, Friction,
     LinearVelocity, Restitution, RigidBody, SweepMode, SweptCcd,
 };
-use bevy::prelude::*;
+use bevy::{gltf::prelude::GltfAssetLabel, prelude::*};
 
 use crate::{
     config::{
         AlphaMode, BodyType, CcdFilterDefinition, ColliderShape, ComponentDefinition,
         RuntimeConfig, SweepModeDefinition, VisualDefinition,
     },
-    persistence::{PersistentObjectId, WorldStateFile},
+    persistence::{PersistentObjectId, PersistRuntimeState, WorldStateFile},
 };
 
 pub(super) fn spawn_world(
@@ -37,7 +37,11 @@ pub(super) fn spawn_world(
             .get(&definition.material)
             .expect("material references are validated before app startup");
 
-        let saved = world_state.bodies.get(&instance.id);
+        let saved = if matches!(definition.body_type, BodyType::Dynamic) {
+            world_state.bodies.get(&instance.id)
+        } else {
+            None
+        };
         let translation = saved
             .map(|state| Vec3::from_array(state.translation_m))
             .unwrap_or_else(|| Vec3::from_array(instance.position_m));
@@ -76,6 +80,10 @@ pub(super) fn spawn_world(
                 ..default()
             },
         ));
+
+        if matches!(definition.body_type, BodyType::Dynamic) {
+            entity.insert(PersistRuntimeState);
+        }
 
         if let Some(ccd) = &definition.swept_ccd {
             let filter = match ccd.filter {
@@ -124,9 +132,24 @@ fn add_visual(
     material_cache: &mut HashMap<VisualMaterialKey, Handle<StandardMaterial>>,
 ) {
     if let Some(model_path) = &definition.visual.model {
-        let scene: Handle<Scene> = asset_server.load(model_path.clone());
+        // Validation guarantees an optional selector has the form "#SceneN".
+        // Unqualified glTF references intentionally select the first scene.
+        let (asset_path, scene_index) = match model_path.split_once('#') {
+            Some((path, selector)) => {
+                let index = selector
+                    .strip_prefix("Scene")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .expect("model scene selectors are validated before app startup");
+                (path, index)
+            }
+            None => (model_path.as_str(), 0),
+        };
+        let scene_path = GltfAssetLabel::Scene(scene_index).from_asset(asset_path.to_owned());
         entity.with_children(|children| {
-            children.spawn((SceneRoot(scene), Transform::default()));
+            children.spawn((
+                WorldAssetRoot(asset_server.load(scene_path)),
+                Transform::default(),
+            ));
         });
         return;
     }
