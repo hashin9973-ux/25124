@@ -1,0 +1,77 @@
+{
+  "id": "sandbox",
+  "name": "Physics Sandbox",
+  "gravity_m_s2": null,
+  "objects": [
+    {
+      "id": "ground",
+      "body_type": "static",
+      "position_m": [0.0, -0.5, 0.0],
+      "rotation_degrees_xyz": [0.0, 0.0, 0.0],
+      "collider": { "kind": "cuboid", "half_extents": [20.0, 0.5, 20.0] },
+      "material": "concrete",
+      "visual": {
+        "model": null,
+        "color_srgba": [0.34, 0.37, 0.40, 1.0],
+        "perceptual_roughness": 0.92,
+        "metallic": 0.0
+      }
+    },
+    {
+      "id": "steel_block_a",
+      "body_type": "dynamic",
+      "position_m": [-1.0, 2.0, 0.0],
+      "rotation_degrees_xyz": [0.0, 0.0, 0.0],
+      "collider": { "kind": "cuboid", "half_extents": [0.25, 0.25, 0.25] },
+      "material": "structural_steel",
+      "visual": {
+        "model": null,
+        "color_srgba": [0.55, 0.59, 0.64, 1.0],
+        "perceptual_roughness": 0.28,
+        "metallic": 0.82
+      }
+    },
+    {
+      "id": "steel_block_b",
+      "body_type": "dynamic",
+      "position_m": [-1.0, 2.55, 0.0],
+      "rotation_degrees_xyz": [0.0, 0.0, 0.0],
+      "collider": { "kind": "cuboid", "half_extents": [0.25, 0.25, 0.25] },
+      "material": "structural_steel",
+      "visual": {
+        "model": null,
+        "color_srgba": [0.42, 0.47, 0.53, 1.0],
+        "perceptual_roughness": 0.34,
+        "metallic": 0.76
+      }
+    },
+    {
+      "id": "timber_crate",
+      "body_type": "dynamic",
+      "position_m": [1.0, 3.0, 0.0],
+      "rotation_degrees_xyz": [0.0, 12.0, 0.0],
+      "collider": { "kind": "cuboid", "half_extents": [0.35, 0.35, 0.35] },
+      "material": "timber",
+      "visual": {
+        "model": null,
+        "color_srgba": [0.48, 0.29, 0.15, 1.0],
+        "perceptual_roughness": 0.86,
+        "metallic": 0.0
+      }
+    },
+    {
+      "id": "rubber_ball",
+      "body_type": "dynamic",
+      "position_m": [2.5, 4.0, 0.0],
+      "rotation_degrees_xyz": [0.0, 0.0, 0.0],
+      "collider": { "kind": "sphere", "radius": 0.30 },
+      "material": "rubber",
+      "visual": {
+        "model": null,
+        "color_srgba": [0.12, 0.24, 0.31, 1.0],
+        "perceptual_roughness": 0.48,
+        "metallic": 0.02
+      }
+    }
+  ]
+}

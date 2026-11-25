@@ -1,0 +1,7 @@
+/target/
+/dist/
+*.pdb
+*.dSYM/
+worlds/**/state.json
+worlds/**/state.json.tmp
+worlds/**/state.json.bak

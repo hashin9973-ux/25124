@@ -1,0 +1,28 @@
+{
+  "materials": {
+    "concrete": {
+      "density_kg_m3": 2400.0,
+      "static_friction": 0.80,
+      "dynamic_friction": 0.65,
+      "restitution": 0.04
+    },
+    "structural_steel": {
+      "density_kg_m3": 7850.0,
+      "static_friction": 0.74,
+      "dynamic_friction": 0.57,
+      "restitution": 0.08
+    },
+    "timber": {
+      "density_kg_m3": 650.0,
+      "static_friction": 0.55,
+      "dynamic_friction": 0.40,
+      "restitution": 0.12
+    },
+    "rubber": {
+      "density_kg_m3": 1100.0,
+      "static_friction": 1.00,
+      "dynamic_friction": 0.82,
+      "restitution": 0.75
+    }
+  }
+}

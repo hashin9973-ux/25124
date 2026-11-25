@@ -1,0 +1,20 @@
+{
+  "physics": {
+    "meters_per_unit": 1.0,
+    "gravity_m_s2": [0.0, -9.81, 0.0],
+    "fixed_hz": 120.0,
+    "substeps": 8
+  },
+  "camera": {
+    "spawn_position_m": [7.0, 5.0, 10.0],
+    "yaw_degrees": -145.0,
+    "pitch_degrees": -15.0,
+    "move_speed_m_s": 7.0,
+    "sprint_multiplier": 3.0,
+    "mouse_radians_per_pixel": 0.0025
+  },
+  "rendering": {
+    "key_light_illuminance_lux": 12000.0,
+    "shadows_enabled": true
+  }
+}
