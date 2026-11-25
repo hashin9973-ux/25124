@@ -1,7 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    fs::{self, File, OpenOptions},
+    io::Write,
     path::{Component, Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use anyhow::{Context, Result, bail, ensure};
@@ -1025,12 +1027,16 @@ pub(super) fn load_world_catalog(
     }
 }
 
-fn read_catalog(path: &Path) -> Result<WorldCatalog> {
-    let contents = fs::read_to_string(path)
-        .with_context(|| format!("could not read world catalog '{}'", path.display()))?;
-    let catalog: WorldCatalog = serde_json::from_str(&contents)
-        .with_context(|| format!("invalid world catalog '{}'", path.display()))?;
-    ensure!(catalog.schema_version == 1, "unsupported world catalog schema");
+static CATALOG_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn parse_catalog(contents: &str, source: &Path) -> Result<WorldCatalog> {
+    let catalog: WorldCatalog = serde_json::from_str(contents)
+        .with_context(|| format!("invalid world catalog '{}'", source.display()))?;
+    ensure!(
+        catalog.schema_version == 1,
+        "unsupported world catalog schema in '{}'",
+        source.display()
+    );
 
     let mut ids = HashSet::new();
     for world in &catalog.worlds {
@@ -1045,6 +1051,176 @@ fn read_catalog(path: &Path) -> Result<WorldCatalog> {
         }
     }
     Ok(catalog)
+}
+
+fn read_catalog_primary(path: &Path) -> Result<WorldCatalog> {
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("could not read world catalog '{}'", path.display()))?;
+    parse_catalog(&contents, path)
+}
+
+fn catalog_previous_path(path: &Path) -> PathBuf {
+    path.with_extension("json.prev")
+}
+
+fn read_catalog(path: &Path) -> Result<WorldCatalog> {
+    match read_catalog_primary(path) {
+        Ok(catalog) => Ok(catalog),
+        Err(primary_error) => {
+            let previous_path = catalog_previous_path(path);
+            match read_catalog_primary(&previous_path) {
+                Ok(catalog) => {
+                    warn!(
+                        "World catalog '{}' is unavailable or invalid ({primary_error:#}); recovered the previous valid generation from '{}'",
+                        path.display(),
+                        previous_path.display()
+                    );
+                    Ok(catalog)
+                }
+                Err(previous_error) => Err(anyhow::anyhow!(
+                    "world catalog '{}' is invalid ({primary_error:#}); previous generation '{}' is also unavailable or invalid ({previous_error:#})",
+                    path.display(),
+                    previous_path.display()
+                )),
+            }
+        }
+    }
+}
+
+fn create_catalog_temp_file(path: &Path, purpose: &str) -> Result<(PathBuf, File)> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .context("catalog write target must have a file name")?
+        .to_string_lossy();
+
+    for _ in 0..128 {
+        let sequence = CATALOG_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{file_name}.{purpose}.{}.{sequence}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("could not create catalog staging file '{}'", candidate.display())
+                });
+            }
+        }
+    }
+
+    bail!(
+        "could not allocate a unique staging file beside '{}'",
+        path.display()
+    )
+}
+
+fn sync_catalog_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        File::open(path)
+            .with_context(|| format!("could not open catalog directory '{}'", path.display()))?
+            .sync_all()
+            .with_context(|| format!("could not sync catalog directory '{}'", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn atomic_write_json(
+    path: &Path,
+    value: &impl Serialize,
+    preserve_current_generation: bool,
+) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .with_context(|| format!("could not create JSON directory '{}'", parent.display()))?;
+    let contents = serde_json::to_vec_pretty(value)?;
+    let (temporary_path, mut temporary_file) = create_catalog_temp_file(path, "write")?;
+    let mut backup_temporary_path = None;
+
+    let result = (|| -> Result<()> {
+        temporary_file
+            .write_all(&contents)
+            .with_context(|| format!("could not write staged JSON '{}'", temporary_path.display()))?;
+        temporary_file
+            .sync_all()
+            .with_context(|| format!("could not flush staged JSON '{}'", temporary_path.display()))?;
+        drop(temporary_file);
+
+        if preserve_current_generation && path.is_file() {
+            let previous_contents = fs::read(path)
+                .with_context(|| format!("could not read current JSON '{}'", path.display()))?;
+            let (staged_backup_path, mut backup_file) =
+                create_catalog_temp_file(path, "backup")?;
+            backup_file
+                .write_all(&previous_contents)
+                .with_context(|| {
+                    format!("could not stage previous JSON '{}'", path.display())
+                })?;
+            backup_file.sync_all().with_context(|| {
+                format!("could not flush previous JSON generation for '{}'", path.display())
+            })?;
+            drop(backup_file);
+            backup_temporary_path = Some(staged_backup_path.clone());
+
+            let previous_path = path.with_extension("json.prev");
+            if previous_path.exists() {
+                fs::remove_file(&previous_path).with_context(|| {
+                    format!("could not remove stale previous JSON '{}'", previous_path.display())
+                })?;
+            }
+            fs::rename(&staged_backup_path, &previous_path).with_context(|| {
+                format!(
+                    "could not commit previous JSON generation '{}' as '{}'",
+                    staged_backup_path.display(),
+                    previous_path.display()
+                )
+            })?;
+            backup_temporary_path = None;
+            sync_catalog_directory(parent)?;
+        }
+
+        // Windows does not replace an existing destination with std::fs::rename.
+        // The validated previous generation is already durable before the primary is removed.
+        if path.exists() {
+            fs::remove_file(path)
+                .with_context(|| format!("could not replace JSON '{}'", path.display()))?;
+            sync_catalog_directory(parent)?;
+        }
+        fs::rename(&temporary_path, path).with_context(|| {
+            format!("could not commit staged JSON '{}'", temporary_path.display())
+        })?;
+        sync_catalog_directory(parent)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+        if let Some(backup_temporary_path) = backup_temporary_path {
+            let _ = fs::remove_file(backup_temporary_path);
+        }
+    }
+    result
+}
+
+fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    atomic_write_json(path, value, true)
+}
+
+fn write_catalog(path: &Path, catalog: &WorldCatalog) -> Result<()> {
+    // Never replace a known-good recovery generation with bytes from a corrupt primary.
+    let primary_is_valid = read_catalog_primary(path).is_ok();
+    atomic_write_json(path, catalog, primary_is_valid)
 }
 
 fn validate_relative_path(path: &str) -> Result<()> {
@@ -1360,8 +1536,10 @@ fn create_empty_world(
         assets: format!("worlds/{id}/assets"),
         outputs: format!("worlds/{id}/outputs"),
     };
-    catalog.worlds.push(entry.clone());
-    write_json(&project_root.join("worlds/catalog.json"), catalog)?;
+    let mut updated_catalog = catalog.clone();
+    updated_catalog.worlds.push(entry.clone());
+    write_catalog(&project_root.join("worlds/catalog.json"), &updated_catalog)?;
+    *catalog = updated_catalog;
     Ok(entry)
 }
 
@@ -1389,7 +1567,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        CharacterStudioWorkspace, read_catalog, validate_action_set, validate_relative_path,
+        CharacterStudioWorkspace, WorldCatalog, WorldCatalogEntry, WorldKind, read_catalog,
+        validate_action_set, validate_relative_path, write_catalog,
     };
 
     #[test]
@@ -1517,6 +1696,78 @@ mod tests {
             .is_err(),
             "action validator must reject surface tags not defined by the world"
         );
+    }
+
+    #[test]
+    fn catalog_updates_preserve_and_recover_the_previous_valid_generation() {
+        use std::fs;
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "physics-sandbox-catalog-write-{}-{timestamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("temporary catalog directory should be created");
+        let path = root.join("catalog.json");
+        let previous_path = path.with_extension("json.prev");
+
+        let make_catalog = |id: &str| WorldCatalog {
+            schema_version: 1,
+            worlds: vec![WorldCatalogEntry {
+                id: id.to_owned(),
+                name: id.to_owned(),
+                kind: WorldKind::Empty,
+                manifest: format!("worlds/{id}/world.json"),
+                data: format!("worlds/{id}/data"),
+                assets: format!("worlds/{id}/assets"),
+                outputs: format!("worlds/{id}/outputs"),
+            }],
+        };
+
+        write_catalog(&path, &make_catalog("first"))
+            .expect("first catalog generation should be written");
+        write_catalog(&path, &make_catalog("second"))
+            .expect("second catalog generation should be written");
+
+        assert_eq!(
+            read_catalog(&path).expect("current catalog should load").worlds[0].id,
+            "second"
+        );
+        assert_eq!(
+            read_catalog(&previous_path)
+                .expect("previous catalog generation should remain valid")
+                .worlds[0]
+                .id,
+            "first"
+        );
+
+        fs::write(&path, b"{ truncated catalog").expect("primary catalog should be corrupted");
+        assert_eq!(
+            read_catalog(&path)
+                .expect("catalog should recover from the previous valid generation")
+                .worlds[0]
+                .id,
+            "first"
+        );
+
+        write_catalog(&path, &make_catalog("third"))
+            .expect("a valid new catalog should replace a corrupt primary");
+        assert_eq!(
+            read_catalog(&path).expect("new primary catalog should load").worlds[0].id,
+            "third"
+        );
+        assert_eq!(
+            read_catalog(&previous_path)
+                .expect("known-good recovery generation should not be overwritten by corrupt data")
+                .worlds[0]
+                .id,
+            "first"
+        );
+
+        fs::remove_dir_all(root).expect("temporary catalog directory should be cleaned up");
     }
 
     #[test]
