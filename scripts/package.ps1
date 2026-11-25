@@ -4,9 +4,9 @@ $Dist = Join-Path $Root "dist/physics_sandbox"
 
 Push-Location $Root
 try {
-    cargo build --release
+    cargo build --release --locked
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build --release failed with exit code $LASTEXITCODE"
+        throw "cargo build --release --locked failed with exit code $LASTEXITCODE"
     }
 
     $Executable = Join-Path $Root "target/release/physics_sandbox.exe"

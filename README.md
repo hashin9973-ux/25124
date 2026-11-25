@@ -42,7 +42,7 @@ This is the first definition/instance boundary. Nested assemblies, dependency-re
 Install a Rust toolchain supported by Bevy 0.20 and the operating-system dependencies required by Bevy, then:
 
 ```powershell
-cargo run
+cargo run --locked
 ```
 
 Select another manifest:
@@ -90,10 +90,12 @@ The current friction values are approximations. Avian combines collider coeffici
 
 ```powershell
 cargo fmt --all -- --check
-cargo check --all-targets
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
+cargo check --locked --all-targets
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
 ```
+
+The committed `Cargo.lock` fixes the dependency graph for repeatable application builds. Keep it in source control and update it deliberately when dependencies change.
 
 A Windows portable release can be assembled with:
 
