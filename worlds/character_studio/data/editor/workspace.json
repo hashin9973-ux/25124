@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "character_studio",
+  "display_name": "Character Studio",
+  "units": "metric",
+  "species_index": "species/index.json",
+  "actions_index": "actions/index.json",
+  "tool_catalog": "editor/tools.json",
+  "output_directories": [
+    "species",
+    "models",
+    "actions",
+    "previews",
+    "autosaves"
+  ]
+}

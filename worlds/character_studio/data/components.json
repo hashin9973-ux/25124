@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "definitions": {
+    "studio.floor": {
+      "body_type": "static",
+      "collider": {
+        "kind": "cuboid",
+        "half_extents": [
+          18,
+          0.3,
+          18
+        ]
+      },
+      "material": "studio_concrete",
+      "visual": {
+        "model": null,
+        "color_srgba": [
+          0.12,
+          0.15,
+          0.17,
+          1
+        ],
+        "perceptual_roughness": 0.88,
+        "metallic": 0.03,
+        "alpha_mode": "opaque"
+      },
+      "swept_ccd": null
+    },
+    "studio.workbench": {
+      "body_type": "static",
+      "collider": {
+        "kind": "cuboid",
+        "half_extents": [
+          3,
+          0.14,
+          1.6
+        ]
+      },
+      "material": "studio_wood",
+      "visual": {
+        "model": null,
+        "color_srgba": [
+          0.28,
+          0.21,
+          0.15,
+          1
+        ],
+        "perceptual_roughness": 0.58,
+        "metallic": 0.04,
+        "alpha_mode": "opaque"
+      },
+      "swept_ccd": null
+    },
+    "studio.reference_pedestal": {
+      "body_type": "static",
+      "collider": {
+        "kind": "cuboid",
+        "half_extents": [
+          0.65,
+          0.6,
+          0.65
+        ]
+      },
+      "material": "studio_concrete",
+      "visual": {
+        "model": null,
+        "color_srgba": [
+          0.2,
+          0.23,
+          0.26,
+          1
+        ],
+        "perceptual_roughness": 0.32,
+        "metallic": 0.42,
+        "alpha_mode": "opaque"
+      },
+      "swept_ccd": null
+    },
+    "species.segment_proxy": {
+      "body_type": "dynamic",
+      "collider": {
+        "kind": "capsule",
+        "radius": 0.12,
+        "segment_length": 0.42
+      },
+      "material": "soft_tissue",
+      "visual": {
+        "model": null,
+        "color_srgba": [
+          0.47,
+          0.32,
+          0.25,
+          1
+        ],
+        "perceptual_roughness": 0.7,
+        "metallic": 0,
+        "alpha_mode": "opaque"
+      },
+      "swept_ccd": null
+    }
+  }
+}

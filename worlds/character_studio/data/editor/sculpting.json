@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "brushes": [
+    {
+      "id": "draw",
+      "radius_m": 0.18,
+      "strength": 0.35
+    },
+    {
+      "id": "clay",
+      "radius_m": 0.22,
+      "strength": 0.28
+    },
+    {
+      "id": "smooth",
+      "radius_m": 0.3,
+      "strength": 0.22
+    },
+    {
+      "id": "flatten",
+      "radius_m": 0.2,
+      "strength": 0.25
+    },
+    {
+      "id": "crease",
+      "radius_m": 0.08,
+      "strength": 0.3
+    },
+    {
+      "id": "grab",
+      "radius_m": 0.35,
+      "strength": 0.45
+    },
+    {
+      "id": "inflate",
+      "radius_m": 0.16,
+      "strength": 0.18
+    },
+    {
+      "id": "pinch",
+      "radius_m": 0.12,
+      "strength": 0.22
+    },
+    {
+      "id": "scrape",
+      "radius_m": 0.22,
+      "strength": 0.24
+    },
+    {
+      "id": "mask",
+      "radius_m": 0.2,
+      "strength": 1
+    }
+  ],
+  "controls": [
+    "radius",
+    "strength",
+    "falloff_curve",
+    "symmetry",
+    "stroke_spacing"
+  ]
+}

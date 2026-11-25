@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "physics": {
+    "meters_per_unit": 1,
+    "gravity_m_s2": [
+      0,
+      -9.81,
+      0
+    ],
+    "fixed_hz": 120,
+    "substeps": 8,
+    "restitution_threshold_m_s": 1.5
+  },
+  "camera": {
+    "spawn_position_m": [
+      8,
+      5.5,
+      10
+    ],
+    "yaw_degrees": -145,
+    "pitch_degrees": -17,
+    "move_speed_m_s": 7,
+    "sprint_multiplier": 3,
+    "mouse_radians_per_pixel": 0.0025
+  },
+  "rendering": {
+    "key_light_illuminance_lux": 18000,
+    "key_light_rotation_degrees_xyz": [
+      -42,
+      -32,
+      0
+    ],
+    "shadows_enabled": true
+  }
+}

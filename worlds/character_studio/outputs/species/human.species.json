@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "human",
+  "display_name": "Human",
+  "asset_type": "species_base",
+  "represents_individual_character": false,
+  "model": {
+    "source": "models/human.glb",
+    "format": "glb",
+    "units": "meters"
+  },
+  "rig": "worlds/character_studio/data/rigs/human.rig.json",
+  "action_sets": [
+    "worlds/character_studio/outputs/actions/human.locomotion.actions.json"
+  ],
+  "physical_representation": "articulated_rigid_body_segments",
+  "segment_material_default": "soft_tissue",
+  "notes": "Reusable human species definition. Individual characters are runtime instances derived from this base species, not authored species records."
+}

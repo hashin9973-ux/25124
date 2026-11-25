@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "coordinate_system": {
+    "handedness": "right",
+    "up_axis": "Y",
+    "forward_axis": "-Z",
+    "units": "meters"
+  },
+  "topology": {
+    "editable_elements": [
+      "vertex",
+      "edge",
+      "face"
+    ],
+    "normal_policy": "recompute_on_topology_change"
+  },
+  "operators": {
+    "transform": {
+      "translate": true,
+      "rotate": true,
+      "scale": true,
+      "proportional_edit": true
+    },
+    "topology": [
+      "extrude",
+      "inset",
+      "bevel",
+      "loop_cut",
+      "bridge",
+      "subdivide",
+      "merge",
+      "dissolve",
+      "separate",
+      "join",
+      "recalculate_normals"
+    ],
+    "modifiers": [
+      "mirror",
+      "array",
+      "subdivision_surface",
+      "solidify",
+      "decimate",
+      "boolean"
+    ]
+  },
+  "symmetry": {
+    "axes": [
+      "x",
+      "y",
+      "z"
+    ],
+    "default_axis": "x"
+  },
+  "selection": {
+    "modes": [
+      "vertex",
+      "edge",
+      "face",
+      "object"
+    ],
+    "supports_hierarchy": true
+  }
+}

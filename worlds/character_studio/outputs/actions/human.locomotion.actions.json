@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "id": "human_locomotion",
+  "species": "human",
+  "actions": [
+    {
+      "id": "locomotion.walk_forward",
+      "display_name": "Walk Forward",
+      "activation": "while_any_trigger_is_active",
+      "triggers": [
+        {
+          "id": "key_forward",
+          "kind": "key_held",
+          "key": "KeyW"
+        },
+        {
+          "id": "foot_surface",
+          "kind": "surface_contact",
+          "segments": [
+            "foot_l",
+            "foot_r"
+          ],
+          "surface_tags": [
+            "walkable",
+            "ground"
+          ],
+          "minimum_normal_dot": 0.65
+        },
+        {
+          "id": "pelvis_tilt",
+          "kind": "joint_angle_threshold",
+          "joint": "spine_lower",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "comparison": "less_than",
+          "angle_degrees": 35
+        }
+      ],
+      "actuators": [
+        {
+          "joint": "hip_l",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": 34,
+          "torque_limit_nm": 55
+        },
+        {
+          "joint": "hip_r",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": -34,
+          "torque_limit_nm": 55
+        },
+        {
+          "joint": "knee_l",
+          "kind": "joint_angular_velocity_target",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "target_rad_s": 1.1,
+          "torque_limit_nm": 30
+        },
+        {
+          "joint": "knee_r",
+          "kind": "joint_angular_velocity_target",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "target_rad_s": -1.1,
+          "torque_limit_nm": 30
+        },
+        {
+          "joint": "ankle_l",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": 8,
+          "torque_limit_nm": 18
+        },
+        {
+          "joint": "ankle_r",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": -8,
+          "torque_limit_nm": 18
+        }
+      ],
+      "blending": {
+        "priority": 10,
+        "fade_in_s": 0.12,
+        "fade_out_s": 0.18
+      }
+    },
+    {
+      "id": "reflex.hand_contact",
+      "display_name": "Hand Contact Reflex",
+      "activation": "on_trigger_edge",
+      "triggers": [
+        {
+          "id": "left_hand_hit",
+          "kind": "collision",
+          "segment": "hand_l",
+          "other_tags": [
+            "environment",
+            "work_surface"
+          ],
+          "minimum_relative_speed_m_s": 0.15
+        },
+        {
+          "id": "right_hand_hit",
+          "kind": "collision",
+          "segment": "hand_r",
+          "other_tags": [
+            "environment",
+            "work_surface"
+          ],
+          "minimum_relative_speed_m_s": 0.15
+        }
+      ],
+      "actuators": [
+        {
+          "joint": "elbow_l",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": -5,
+          "torque_limit_nm": 16
+        },
+        {
+          "joint": "elbow_r",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": -5,
+          "torque_limit_nm": 16
+        }
+      ],
+      "blending": {
+        "priority": 30,
+        "fade_in_s": 0.04,
+        "fade_out_s": 0.2
+      }
+    }
+  ],
+  "execution_policy": {
+    "forces_and_joint_motors_only": true,
+    "allow_impulses": false,
+    "allow_root_teleport": false,
+    "allow_rotation_locks": false,
+    "allow_external_object_push": false
+  }
+}

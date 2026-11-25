@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "worlds": [
+    {
+      "id": "sandbox",
+      "name": "Physics Sandbox",
+      "kind": "physics_sandbox",
+      "manifest": "worlds/sandbox/world.json",
+      "data": "data",
+      "assets": "assets",
+      "outputs": "worlds/sandbox/outputs"
+    },
+    {
+      "id": "character_studio",
+      "name": "Character Studio",
+      "kind": "character_studio",
+      "manifest": "worlds/character_studio/world.json",
+      "data": "worlds/character_studio/data",
+      "assets": "worlds/character_studio/assets",
+      "outputs": "worlds/character_studio/outputs"
+    }
+  ]
+}

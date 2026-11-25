@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "timeline": {
+    "frames_per_second": 60,
+    "start_frame": 1,
+    "end_frame": 240
+  },
+  "tracks": [
+    "pose",
+    "joint_motor",
+    "event",
+    "audio_marker"
+  ],
+  "interpolation": [
+    "constant",
+    "linear",
+    "cubic"
+  ],
+  "authoring": [
+    "keyframes",
+    "action_clips",
+    "blend_spaces",
+    "state_transitions"
+  ],
+  "runtime_policy": {
+    "pose_keys_are_targets": true,
+    "actuation_uses_physics": true,
+    "transform_teleport": false
+  }
+}

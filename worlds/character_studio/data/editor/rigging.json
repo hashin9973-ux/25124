@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "skeleton": {
+    "segment_representation": "rigid_body",
+    "rotation_locks": false,
+    "translational_locks": false
+  },
+  "joint_types": [
+    "ball",
+    "hinge",
+    "fixed",
+    "spherical"
+  ],
+  "joint_properties": [
+    "parent_segment",
+    "child_segment",
+    "anchor_parent_m",
+    "anchor_child_m",
+    "axis_local",
+    "angular_limits_rad",
+    "motor_torque_limit_nm",
+    "motor_speed_limit_rad_s"
+  ],
+  "deformation": {
+    "weighting": [
+      "linear_blend",
+      "dual_quaternion"
+    ],
+    "weight_normalization": true
+  },
+  "inverse_kinematics": {
+    "solvers": [
+      "ccd",
+      "fabrik"
+    ],
+    "status": "specification_only"
+  },
+  "physical_actuation": {
+    "allowed": [
+      "joint_torque",
+      "joint_angular_velocity_target"
+    ],
+    "requires_force_limits": true,
+    "teleport_root": false,
+    "impulse_jump": false
+  }
+}

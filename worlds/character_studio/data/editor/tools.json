@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "note": "Declarative tool registry. Operators marked specification_only are not yet wired to editable mesh data.",
+  "implemented_foundation": [
+    "world_browser",
+    "world_local_data_loading",
+    "world_local_asset_namespace",
+    "species_base_catalog",
+    "action_trigger_contract",
+    "physics_world_viewport"
+  ],
+  "tool_groups": [
+    {
+      "id": "mesh_edit",
+      "name": "Mesh Editing",
+      "status": "specification_only",
+      "selection_modes": [
+        "vertex",
+        "edge",
+        "face"
+      ],
+      "operators": [
+        "move",
+        "rotate",
+        "scale",
+        "extrude",
+        "inset",
+        "bevel",
+        "loop_cut",
+        "bridge",
+        "subdivide",
+        "merge",
+        "dissolve",
+        "recalculate_normals",
+        "separate",
+        "join"
+      ]
+    },
+    {
+      "id": "sculpt",
+      "name": "Sculpting",
+      "status": "specification_only",
+      "brushes": [
+        "draw",
+        "clay",
+        "smooth",
+        "flatten",
+        "crease",
+        "grab",
+        "inflate",
+        "pinch",
+        "scrape",
+        "mask"
+      ],
+      "controls": [
+        "radius",
+        "strength",
+        "falloff",
+        "symmetry_x",
+        "symmetry_y",
+        "symmetry_z"
+      ]
+    },
+    {
+      "id": "surface",
+      "name": "Surface and Topology",
+      "status": "specification_only",
+      "operators": [
+        "remesh_voxel",
+        "remesh_quad",
+        "decimate",
+        "smooth_surface",
+        "shrink_fatten",
+        "solidify",
+        "mirror",
+        "array",
+        "boolean_union",
+        "boolean_difference",
+        "boolean_intersection"
+      ]
+    },
+    {
+      "id": "materials",
+      "name": "PBR Materials",
+      "status": "specification_only",
+      "channels": [
+        "base_color",
+        "metallic",
+        "roughness",
+        "ior",
+        "normal",
+        "height",
+        "opacity",
+        "emissive"
+      ],
+      "features": [
+        "material_slots",
+        "texture_sets",
+        "uv_channels"
+      ]
+    },
+    {
+      "id": "rigging",
+      "name": "Rigging",
+      "status": "data_contract",
+      "features": [
+        "bone_hierarchy",
+        "deform_weights",
+        "weight_paint",
+        "inverse_kinematics",
+        "forward_kinematics",
+        "joint_limits",
+        "physics_motors"
+      ],
+      "rotation_locks": false
+    },
+    {
+      "id": "animation",
+      "name": "Animation",
+      "status": "specification_only",
+      "features": [
+        "timeline",
+        "keyframes",
+        "dope_sheet",
+        "curve_editor",
+        "nonlinear_action_tracks",
+        "pose_library",
+        "action_markers"
+      ]
+    },
+    {
+      "id": "actions",
+      "name": "Physics Actions",
+      "status": "data_contract",
+      "features": [
+        "key_triggers",
+        "contact_triggers",
+        "surface_geometry_triggers",
+        "joint_angle_thresholds",
+        "collision_triggers",
+        "torque_actuators",
+        "angular_velocity_motors"
+      ]
+    },
+    {
+      "id": "output",
+      "name": "Output",
+      "status": "specification_only",
+      "formats": [
+        "gltf_2_0",
+        "glb",
+        "json_actions"
+      ],
+      "features": [
+        "species_package",
+        "model_export",
+        "action_export",
+        "preview_render"
+      ]
+    }
+  ]
+}
