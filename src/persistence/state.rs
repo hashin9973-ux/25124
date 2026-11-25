@@ -67,7 +67,10 @@ impl WorldStateFile {
         );
 
         for (id, body) in &state.bodies {
-            ensure!(!id.trim().is_empty(), "save contains an empty persistent object id");
+            ensure!(
+                !id.trim().is_empty(),
+                "save contains an empty persistent object id"
+            );
             ensure!(
                 body.translation_m
                     .iter()
@@ -97,8 +100,9 @@ fn atomic_replace(path: &Path, contents: &[u8]) -> Result<()> {
     let backup_path = backup_path(path);
 
     {
-        let mut file = File::create(&temp_path)
-            .with_context(|| format!("could not create temporary save '{}'", temp_path.display()))?;
+        let mut file = File::create(&temp_path).with_context(|| {
+            format!("could not create temporary save '{}'", temp_path.display())
+        })?;
         file.write_all(contents)
             .with_context(|| format!("could not write temporary save '{}'", temp_path.display()))?;
         file.sync_all()
@@ -109,7 +113,10 @@ fn atomic_replace(path: &Path, contents: &[u8]) -> Result<()> {
     if had_previous_save {
         if backup_path.exists() {
             fs::remove_file(&backup_path).with_context(|| {
-                format!("could not remove old save backup '{}'", backup_path.display())
+                format!(
+                    "could not remove old save backup '{}'",
+                    backup_path.display()
+                )
             })?;
         }
         fs::rename(path, &backup_path)
@@ -126,7 +133,10 @@ fn atomic_replace(path: &Path, contents: &[u8]) -> Result<()> {
 
     if backup_path.exists() {
         fs::remove_file(&backup_path).with_context(|| {
-            format!("save committed, but backup '{}' could not be removed", backup_path.display())
+            format!(
+                "save committed, but backup '{}' could not be removed",
+                backup_path.display()
+            )
         })?;
     }
 
@@ -165,8 +175,8 @@ mod tests {
         );
 
         expected.write_atomic(&path).expect("save should succeed");
-        let loaded = WorldStateFile::load_or_default(&path, "test-world")
-            .expect("save should load");
+        let loaded =
+            WorldStateFile::load_or_default(&path, "test-world").expect("save should load");
 
         assert_eq!(loaded.bodies.len(), 1);
         assert_eq!(loaded.bodies["body-a"].translation_m, [1.0, 2.0, 3.0]);

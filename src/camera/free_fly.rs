@@ -1,7 +1,4 @@
-use bevy::{
-    input::mouse::AccumulatedMouseMotion,
-    prelude::*,
-};
+use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
 
 use crate::config::RuntimeConfig;
 
@@ -11,10 +8,7 @@ pub struct FreeFlyCamera {
     pitch_radians: f32,
 }
 
-pub(super) fn spawn_camera(
-    mut commands: Commands,
-    config: Res<RuntimeConfig>,
-) {
+pub(super) fn spawn_camera(mut commands: Commands, config: Res<RuntimeConfig>) {
     let camera = &config.engine.camera;
     let yaw = camera.yaw_degrees.to_radians();
     let pitch = camera.pitch_degrees.to_radians();
@@ -45,8 +39,8 @@ pub(super) fn move_camera(
 
     for (mut transform, mut controller) in &mut cameras {
         controller.yaw_radians -= delta.x;
-        controller.pitch_radians = (controller.pitch_radians - delta.y)
-            .clamp(-1.553_343, 1.553_343);
+        controller.pitch_radians =
+            (controller.pitch_radians - delta.y).clamp(-1.553_343, 1.553_343);
 
         transform.rotation = Quat::from_euler(
             EulerRot::YXZ,
@@ -84,9 +78,7 @@ pub(super) fn move_camera(
             1.0
         };
 
-        transform.translation += movement.normalize_or_zero()
-            * settings.move_speed_m_s
-            * sprint
-            * time.delta_secs();
+        transform.translation +=
+            movement.normalize_or_zero() * settings.move_speed_m_s * sprint * time.delta_secs();
     }
 }

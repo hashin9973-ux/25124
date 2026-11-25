@@ -1,6 +1,6 @@
 use avian3d::prelude::{
-    AngularVelocity, Collider, ColliderDensity, CollisionEventsEnabled, Friction,
-    LinearVelocity, Restitution, RigidBody, SweptCcd,
+    AngularVelocity, Collider, ColliderDensity, CollisionEventsEnabled, Friction, LinearVelocity,
+    Restitution, RigidBody, SweptCcd,
 };
 use bevy::prelude::*;
 
@@ -129,19 +129,14 @@ fn collider_from_definition(shape: &ColliderShape) -> Collider {
     }
 }
 
-fn mesh_from_collider_shape(
-    shape: &ColliderShape,
-    meshes: &mut Assets<Mesh>,
-) -> Handle<Mesh> {
+fn mesh_from_collider_shape(shape: &ColliderShape, meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
     match shape {
         ColliderShape::Cuboid { half_extents } => meshes.add(Cuboid::new(
             half_extents[0] * 2.0,
             half_extents[1] * 2.0,
             half_extents[2] * 2.0,
         )),
-        ColliderShape::Sphere { radius } => {
-            meshes.add(Sphere::new(*radius).mesh().uv(48, 32))
-        }
+        ColliderShape::Sphere { radius } => meshes.add(Sphere::new(*radius).mesh().uv(48, 32)),
         ColliderShape::Capsule {
             radius,
             segment_length,

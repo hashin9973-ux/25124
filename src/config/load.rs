@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -57,9 +56,14 @@ impl RuntimeConfig {
             Some(path) => path,
             None => detect_project_root()?,
         };
-        let data_dir = resolve_path(&root, data_override.unwrap_or_else(|| PathBuf::from("data")));
-        let assets_dir =
-            resolve_path(&root, assets_override.unwrap_or_else(|| PathBuf::from("assets")));
+        let data_dir = resolve_path(
+            &root,
+            data_override.unwrap_or_else(|| PathBuf::from("data")),
+        );
+        let assets_dir = resolve_path(
+            &root,
+            assets_override.unwrap_or_else(|| PathBuf::from("assets")),
+        );
         let world_manifest = resolve_path(
             &root,
             world_override.unwrap_or_else(|| PathBuf::from("worlds/sandbox/world.json")),
@@ -78,8 +82,7 @@ impl RuntimeConfig {
         let materials: MaterialCatalog = read_json(&data_dir.join("materials.json"))?;
         let world: WorldManifest = read_json(&world_manifest_path)?;
 
-        validate_all(&engine, &materials, &world)
-            .context("configuration validation failed")?;
+        validate_all(&engine, &materials, &world).context("configuration validation failed")?;
 
         let world_state_path = world_manifest_path.with_file_name("state.json");
         let persisted_state = WorldStateFile::load_or_default(&world_state_path, &world.id)

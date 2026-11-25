@@ -31,11 +31,17 @@ pub fn validate_all(
 
     let camera = &engine.camera;
     ensure!(
-        camera.spawn_position_m.iter().all(|value| value.is_finite()),
+        camera
+            .spawn_position_m
+            .iter()
+            .all(|value| value.is_finite()),
         "camera.spawn_position_m must contain only finite values"
     );
     ensure!(camera.yaw_degrees.is_finite(), "camera yaw must be finite");
-    ensure!(camera.pitch_degrees.is_finite(), "camera pitch must be finite");
+    ensure!(
+        camera.pitch_degrees.is_finite(),
+        "camera pitch must be finite"
+    );
     ensure!(
         camera.move_speed_m_s.is_finite() && camera.move_speed_m_s > 0.0,
         "camera move speed must be positive and finite"
@@ -45,8 +51,7 @@ pub fn validate_all(
         "camera sprint multiplier must be finite and at least 1.0"
     );
     ensure!(
-        camera.mouse_radians_per_pixel.is_finite()
-            && camera.mouse_radians_per_pixel >= 0.0,
+        camera.mouse_radians_per_pixel.is_finite() && camera.mouse_radians_per_pixel >= 0.0,
         "camera mouse sensitivity must be finite and non-negative"
     );
 
@@ -56,7 +61,10 @@ pub fn validate_all(
         "key light illuminance must be positive and finite"
     );
 
-    ensure!(!materials.materials.is_empty(), "material catalogue is empty");
+    ensure!(
+        !materials.materials.is_empty(),
+        "material catalogue is empty"
+    );
     for (id, material) in &materials.materials {
         ensure!(!id.trim().is_empty(), "material ids cannot be empty");
         ensure!(
@@ -106,7 +114,10 @@ pub fn validate_all(
             object.id
         );
         ensure!(
-            object.rotation_degrees_xyz.iter().all(|value| value.is_finite()),
+            object
+                .rotation_degrees_xyz
+                .iter()
+                .all(|value| value.is_finite()),
             "object '{}' rotation must contain only finite values",
             object.id
         );
@@ -138,9 +149,11 @@ pub fn validate_all(
         }
 
         ensure!(
-            object.visual.color_srgba.iter().all(|value| {
-                value.is_finite() && (0.0..=1.0).contains(value)
-            }),
+            object
+                .visual
+                .color_srgba
+                .iter()
+                .all(|value| { value.is_finite() && (0.0..=1.0).contains(value) }),
             "object '{}' visual color must be finite sRGBA values in [0, 1]",
             object.id
         );
@@ -151,8 +164,7 @@ pub fn validate_all(
             object.id
         );
         ensure!(
-            object.visual.metallic.is_finite()
-                && (0.0..=1.0).contains(&object.visual.metallic),
+            object.visual.metallic.is_finite() && (0.0..=1.0).contains(&object.visual.metallic),
             "object '{}' metallic value must be in [0, 1]",
             object.id
         );

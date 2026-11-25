@@ -17,11 +17,6 @@ fn setup_key_light(mut commands: Commands, config: Res<RuntimeConfig>) {
             shadows_enabled: config.engine.rendering.shadows_enabled,
             ..default()
         },
-        Transform::from_rotation(Quat::from_euler(
-            EulerRot::XYZ,
-            -0.85,
-            -0.55,
-            0.0,
-        )),
+        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.85, -0.55, 0.0)),
     ));
 }
