@@ -214,6 +214,7 @@ impl CharacterStudioWorkspace {
 
             let segment_ids = collect_ids(&rig, "segments", &rig_path)?;
             let joint_ids = collect_ids(&rig, "joints", &rig_path)?;
+            validate_rig(&rig, &segment_ids, &joint_ids, &rig_path)?;
             rig_ids.insert(reference.id.clone(), (segment_ids, joint_ids));
             species_documents.push(species);
         }
@@ -313,6 +314,184 @@ fn collect_ids(document: &Value, key: &str, path: &Path) -> Result<HashSet<Strin
         );
     }
     Ok(ids)
+}
+
+fn validate_rig(
+    rig: &Value,
+    segment_ids: &HashSet<String>,
+    joint_ids: &HashSet<String>,
+    path: &Path,
+) -> Result<()> {
+    let segments = rig
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("rig '{}' has no segments array", path.display()))?;
+
+    for segment in segments {
+        let id = segment.get("id").and_then(Value::as_str).unwrap_or_default();
+
+        if let Some(parent) = segment.get("parent").filter(|value| !value.is_null()) {
+            let parent = parent.as_str().ok_or_else(|| {
+                anyhow::anyhow!("segment '{id}' in '{}' has a non-string parent", path.display())
+            })?;
+            ensure!(
+                segment_ids.contains(parent),
+                "segment '{id}' in '{}' references unknown parent '{parent}'",
+                path.display()
+            );
+            ensure!(parent != id, "segment '{id}' cannot parent itself");
+        }
+
+        validate_vec3(
+            segment.get("local_center_m"),
+            &format!("segment '{id}' local_center_m"),
+            path,
+        )?;
+
+        let shape = segment.get("shape").and_then(Value::as_str).unwrap_or_default();
+        match shape {
+            "sphere" => validate_positive_number(segment.get("radius_m"), "sphere radius", id, path)?,
+            "capsule" => {
+                validate_positive_number(segment.get("radius_m"), "capsule radius", id, path)?;
+                validate_positive_number(segment.get("length_m"), "capsule length", id, path)?;
+            }
+            "cuboid" => {
+                let extents = segment
+                    .get("half_extents_m")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| anyhow::anyhow!("cuboid segment '{id}' in '{}' has no half_extents_m", path.display()))?;
+                ensure!(
+                    extents.len() == 3
+                        && extents.iter().all(|value| {
+                            value.as_f64().is_some_and(|number| number.is_finite() && number > 0.0)
+                        }),
+                    "cuboid segment '{id}' in '{}' requires three positive finite half-extents",
+                    path.display()
+                );
+            }
+            _ => bail!("segment '{id}' in '{}' has unsupported shape '{shape}'", path.display()),
+        }
+    }
+
+    let joints = rig
+        .get("joints")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("rig '{}' has no joints array", path.display()))?;
+
+    for joint in joints {
+        let id = joint.get("id").and_then(Value::as_str).unwrap_or_default();
+        let parent = joint
+            .get("parent")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("joint '{id}' in '{}' has no parent segment", path.display()))?;
+        let child = joint
+            .get("child")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("joint '{id}' in '{}' has no child segment", path.display()))?;
+        ensure!(
+            segment_ids.contains(parent) && segment_ids.contains(child),
+            "joint '{id}' in '{}' references an unknown segment",
+            path.display()
+        );
+        ensure!(parent != child, "joint '{id}' cannot connect a segment to itself");
+
+        let joint_type = joint.get("type").and_then(Value::as_str).unwrap_or_default();
+        ensure!(
+            matches!(joint_type, "ball" | "hinge" | "fixed" | "spherical"),
+            "joint '{id}' in '{}' has unsupported type '{joint_type}'",
+            path.display()
+        );
+        validate_vec3(
+            joint.get("anchor_parent_m"),
+            &format!("joint '{id}' anchor_parent_m"),
+            path,
+        )?;
+        validate_vec3(
+            joint.get("anchor_child_m"),
+            &format!("joint '{id}' anchor_child_m"),
+            path,
+        )?;
+
+        if joint_type == "hinge" {
+            let axis = validate_vec3(
+                joint.get("axis_local"),
+                &format!("hinge '{id}' axis_local"),
+                path,
+            )?;
+            let length_squared = axis.iter().map(|value| value * value).sum::<f64>();
+            ensure!(
+                length_squared > 1.0e-12,
+                "hinge '{id}' in '{}' has a zero-length axis",
+                path.display()
+            );
+        }
+
+        if let Some(limits) = joint.get("angular_limits_degrees") {
+            let ranges = limits.as_array().ok_or_else(|| {
+                anyhow::anyhow!("joint '{id}' angular limits in '{}' must be an array", path.display())
+            })?;
+            ensure!(
+                ranges.iter().all(|range| {
+                    range.as_array().is_some_and(|pair| {
+                        pair.len() == 2
+                            && pair[0].as_f64().zip(pair[1].as_f64()).is_some_and(
+                                |(minimum, maximum)| {
+                                    minimum.is_finite()
+                                        && maximum.is_finite()
+                                        && minimum <= maximum
+                                },
+                            )
+                    })
+                }),
+                "joint '{id}' in '{}' has invalid angular limits",
+                path.display()
+            );
+        }
+    }
+
+    ensure!(
+        joint_ids.len() == joints.len(),
+        "rig '{}' contains inconsistent joint ids",
+        path.display()
+    );
+    Ok(())
+}
+
+fn validate_vec3(value: Option<&Value>, label: &str, path: &Path) -> Result<[f64; 3]> {
+    let values = value
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("{label} in '{}' must be a vec3", path.display()))?;
+    ensure!(
+        values.len() == 3,
+        "{label} in '{}' must contain exactly three values",
+        path.display()
+    );
+    let mut result = [0.0; 3];
+    for (index, value) in values.iter().enumerate() {
+        let number = value
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("{label} in '{}' contains a non-number", path.display()))?;
+        ensure!(number.is_finite(), "{label} in '{}' contains a non-finite value", path.display());
+        result[index] = number;
+    }
+    Ok(result)
+}
+
+fn validate_positive_number(
+    value: Option<&Value>,
+    label: &str,
+    id: &str,
+    path: &Path,
+) -> Result<()> {
+    let number = value
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow::anyhow!("segment '{id}' in '{}' has no numeric {label}", path.display()))?;
+    ensure!(
+        number.is_finite() && number > 0.0,
+        "segment '{id}' in '{}' has invalid {label}",
+        path.display()
+    );
+    Ok(())
 }
 
 fn validate_action_set(
