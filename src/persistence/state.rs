@@ -135,15 +135,6 @@ fn load_valid_state(path: &Path, expected_world_id: &str) -> Result<Option<World
     Ok(Some(state))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReplaceStage {
-    TempSynced,
-    BackupSynced,
-    BackupCommitted,
-    PrimaryRemoved,
-    PrimaryCommitted,
-}
-
 fn load_recovery_state(
     candidates: [&Path; 2],
     expected_world_id: &str,
@@ -220,10 +211,7 @@ where
     sync_directory(parent)?;
     after_stage(ReplaceStage::TempSynced)?;
 
-    let primary_is_valid = matches!(
-        load_valid_state(path, expected_world_id),
-        Ok(Some(_))
-    );
+    let primary_is_valid = matches!(load_valid_state(path, expected_world_id), Ok(Some(_)));
 
     if primary_is_valid {
         if previous_temp_path.exists() {
@@ -288,8 +276,12 @@ where
     // On Windows, rename does not replace an existing destination. Before removing
     // the primary, either a validated .prev copy exists or an older .bak is preserved.
     if path.exists() {
-        fs::remove_file(path)
-            .with_context(|| format!("could not remove previous primary save '{}'", path.display()))?;
+        fs::remove_file(path).with_context(|| {
+            format!(
+                "could not remove previous primary save '{}'",
+                path.display()
+            )
+        })?;
         sync_directory(parent)?;
     }
     after_stage(ReplaceStage::PrimaryRemoved)?;
@@ -306,8 +298,9 @@ where
         Ok(Some(_))
     ) {
         if backup_path.exists() {
-            fs::remove_file(&backup_path)
-                .with_context(|| format!("could not remove old save backup '{}'", backup_path.display()))?;
+            fs::remove_file(&backup_path).with_context(|| {
+                format!("could not remove old save backup '{}'", backup_path.display())
+            })?;
             sync_directory(parent)?;
             after_stage(ReplaceStage::BackupRemoved)?;
         }
@@ -402,11 +395,7 @@ mod tests {
         state
     }
 
-    fn interrupt_write_at(
-        path: &Path,
-        replacement: &WorldStateFile,
-        target_stage: ReplaceStage,
-    ) {
+    fn interrupt_write_at(path: &Path, replacement: &WorldStateFile, target_stage: ReplaceStage) {
         let contents =
             serde_json::to_vec_pretty(replacement).expect("replacement state should serialize");
         let mut injected = false;
@@ -507,10 +496,16 @@ mod tests {
             let path = unique_save_path("stage-interruption");
             let mut first_state = sample_state();
             first_state.bodies.get_mut("body-a").unwrap().translation_m = [1.0, 2.0, 3.0];
-            first_state.write_atomic(&path).expect("initial save should succeed");
+            first_state
+                .write_atomic(&path)
+                .expect("initial save should succeed");
 
             let mut current_state = sample_state();
-            current_state.bodies.get_mut("body-a").unwrap().translation_m = [4.0, 5.0, 6.0];
+            current_state
+                .bodies
+                .get_mut("body-a")
+                .unwrap()
+                .translation_m = [4.0, 5.0, 6.0];
             current_state
                 .write_atomic(&path)
                 .expect("second save should create a valid backup");
@@ -522,12 +517,8 @@ mod tests {
             let recovered = WorldStateFile::load_or_default(&path, "test-world")
                 .expect("primary or recovery file must remain recoverable");
             assert!(
-                [
-                    [1.0, 2.0, 3.0],
-                    [4.0, 5.0, 6.0],
-                    [7.0, 8.0, 9.0],
-                ]
-                .contains(&recovered.bodies["body-a"].translation_m),
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0],]
+                    .contains(&recovered.bodies["body-a"].translation_m),
                 "unexpected recovered state after interruption at {stage:?}"
             );
 
@@ -538,15 +529,15 @@ mod tests {
                     "backup should be at the injected post-removal stage"
                 );
             } else {
-                let backup_state = backup_state.expect("backup should remain valid before rotation");
+                let backup_state =
+                    backup_state.expect("backup should remain valid before rotation");
                 let expected_backup_translation = if stage == ReplaceStage::BackupCommitted {
                     [4.0, 5.0, 6.0]
                 } else {
                     [1.0, 2.0, 3.0]
                 };
                 assert_eq!(
-                    backup_state.bodies["body-a"].translation_m,
-                    expected_backup_translation,
+                    backup_state.bodies["body-a"].translation_m, expected_backup_translation,
                     "backup was rotated before the primary commit at {stage:?}"
                 );
             }
@@ -586,8 +577,7 @@ mod tests {
                 [1.0, 2.0, 3.0]
             };
             assert_eq!(
-                loaded.bodies["body-a"].translation_m,
-                expected_translation,
+                loaded.bodies["body-a"].translation_m, expected_translation,
                 "wrong state recovered after interruption at {stage:?}"
             );
 
