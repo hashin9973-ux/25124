@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, ensure};
 use bevy::{
@@ -51,7 +51,7 @@ struct MeshDocumentSurface;
 
 #[derive(Resource, Default)]
 pub(super) struct RenderedMeshSnapshot {
-    document: Option<MeshDocument>,
+    document_id: Option<String>,
 }
 
 pub(super) fn begin_interaction_frame(mut state: ResMut<MeshViewportState>) {
@@ -67,22 +67,26 @@ pub(super) fn sync_mesh_surfaces(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let selected_document = state
+    let selected_document_id = state
         .active_document_id
-        .as_deref()
-        .and_then(|id| workspace.mesh_documents.iter().find(|document| document.id == id))
-        .or_else(|| workspace.mesh_documents.first());
-    let desired_document = selected_document.cloned();
+        .as_ref()
+        .filter(|id| workspace.mesh_documents.iter().any(|document| &document.id == *id))
+        .cloned()
+        .or_else(|| workspace.mesh_documents.first().map(|document| document.id.clone()));
 
-    if snapshot.document == desired_document {
+    if !workspace.is_changed() && snapshot.document_id == selected_document_id {
         return;
     }
+
+    let selected_document = selected_document_id
+        .as_deref()
+        .and_then(|id| workspace.mesh_documents.iter().find(|document| document.id == id));
 
     for entity in &existing_surfaces {
         commands.entity(entity).despawn();
     }
 
-    if let Some(document) = desired_document.as_ref() {
+    if let Some(document) = selected_document {
         match build_surface_mesh(document) {
             Ok(Some(mesh)) => {
                 let material = materials.add(StandardMaterial {
@@ -108,7 +112,7 @@ pub(super) fn sync_mesh_surfaces(
         }
     }
 
-    snapshot.document = desired_document;
+    snapshot.document_id = selected_document_id;
 }
 
 fn build_surface_mesh(document: &MeshDocument) -> Result<Option<Mesh>> {
@@ -795,35 +799,61 @@ pub(super) fn draw_mesh_overlay(
         .iter()
         .filter(|document| state.active_document_id.as_deref() == Some(document.id.as_str()))
     {
+        let selected_vertex_ids = state
+            .selection
+            .iter()
+            .filter_map(|selection| match selection {
+                SelectedMeshElement::Vertex(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let selected_edge_ids = state
+            .selection
+            .iter()
+            .filter_map(|selection| match selection {
+                SelectedMeshElement::Edge(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let selected_face_ids = state
+            .selection
+            .iter()
+            .filter_map(|selection| match selection {
+                SelectedMeshElement::Face(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+
+        let vertex_positions = document
+            .vertices
+            .iter()
+            .map(|vertex| {
+                (
+                    vertex.id.as_str(),
+                    Vec3::from_array(vertex.position_m.map(|value| value as f32)),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
         for edge in &document.edges {
-            let Some(start) = document.vertices.iter().find(|vertex| vertex.id == edge.vertices[0])
-            else {
+            let Some(start) = vertex_positions.get(edge.vertices[0].as_str()) else {
                 continue;
             };
-            let Some(end) = document.vertices.iter().find(|vertex| vertex.id == edge.vertices[1])
-            else {
+            let Some(end) = vertex_positions.get(edge.vertices[1].as_str()) else {
                 continue;
             };
 
-            let selected = state.active_document_id.as_deref() == Some(document.id.as_str())
-                && state.selection.contains(&SelectedMeshElement::Edge(edge.id.clone()));
+            let selected = selected_edge_ids.contains(edge.id.as_str());
             let color = if selected {
                 Color::srgb(1.0, 0.72, 0.12)
             } else {
                 Color::srgb(0.16, 0.20, 0.25)
             };
-            gizmos.line(
-                Vec3::from_array(start.position_m.map(|value| value as f32)),
-                Vec3::from_array(end.position_m.map(|value| value as f32)),
-                color,
-            );
+            gizmos.line(*start, *end, color);
         }
 
         for vertex in &document.vertices {
-            let selected = state.active_document_id.as_deref() == Some(document.id.as_str())
-                && state
-                    .selection
-                    .contains(&SelectedMeshElement::Vertex(vertex.id.clone()));
+            let selected = selected_vertex_ids.contains(vertex.id.as_str());
             let color = if selected {
                 Color::srgb(1.0, 0.72, 0.12)
             } else {
@@ -833,30 +863,21 @@ pub(super) fn draw_mesh_overlay(
             gizmos.sphere(Isometry3d::new(center, Quat::IDENTITY), 0.018, color);
         }
 
-        if state.active_document_id.as_deref() == Some(document.id.as_str()) {
-            for selection in &state.selection {
-                let SelectedMeshElement::Face(face_id) = selection else {
-                    continue;
-                };
-                let Some(face) = document.faces.iter().find(|face| &face.id == face_id) else {
-                    continue;
-                };
-                let points = face
-                    .vertices
-                    .iter()
-                    .filter_map(|id| {
-                        document
-                            .vertices
-                            .iter()
-                            .find(|vertex| &vertex.id == id)
-                            .map(|vertex| {
-                                Vec3::from_array(vertex.position_m.map(|value| value as f32))
-                            })
-                    })
-                    .collect::<Vec<_>>();
-                if points.len() == face.vertices.len() {
-                    gizmos.lineloop(points, Color::srgb(1.0, 0.72, 0.12));
-                }
+        for face_id in &selected_face_ids {
+            let Some(face) = document
+                .faces
+                .iter()
+                .find(|face| face.id.as_str() == *face_id)
+            else {
+                continue;
+            };
+            let points = face
+                .vertices
+                .iter()
+                .filter_map(|id| vertex_positions.get(id.as_str()).copied())
+                .collect::<Vec<_>>();
+            if points.len() == face.vertices.len() {
+                gizmos.lineloop(points, Color::srgb(1.0, 0.72, 0.12));
             }
         }
     }
