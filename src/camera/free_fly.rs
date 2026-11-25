@@ -82,3 +82,12 @@ pub(super) fn move_camera(
             movement.normalize_or_zero() * settings.move_speed_m_s * sprint * time.delta_secs();
     }
 }
+
+pub(super) fn despawn_camera(
+    mut commands: Commands,
+    cameras: Query<Entity, With<FreeFlyCamera>>,
+) {
+    for camera in &cameras {
+        commands.entity(camera).despawn();
+    }
+}

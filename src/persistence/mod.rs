@@ -10,7 +10,7 @@ use std::{
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
 
-use crate::persistence::state::PersistedBodyState;
+use crate::{editor::EditorScreen, persistence::state::PersistedBodyState};
 
 #[derive(Component, Clone, Debug)]
 pub struct PersistentObjectId(pub String);
@@ -29,7 +29,10 @@ pub struct PersistencePlugin;
 
 impl Plugin for PersistencePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, save_world_on_f5);
+        app.add_systems(
+            Update,
+            save_world_on_f5.run_if(in_state(EditorScreen::InWorld)),
+        );
     }
 }
 

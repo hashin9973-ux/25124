@@ -1,6 +1,7 @@
 mod camera;
 mod config;
 mod engine;
+mod editor;
 mod persistence;
 mod physics;
 mod rendering;
@@ -11,6 +12,7 @@ use bevy::{asset::AssetPlugin, prelude::*};
 
 use crate::{
     config::{BodyType, RuntimeConfig},
+    editor::EditorPlugin,
     engine::EnginePlugin,
     persistence::WorldStateFile,
 };
@@ -28,7 +30,7 @@ fn run() -> Result<()> {
     };
     let world_state = WorldStateFile::load_or_default(&config.paths.world_state, &config.world.id)?;
     report_saved_state_compatibility(&config, &world_state);
-    let asset_root = config.paths.assets_dir.to_string_lossy().into_owned();
+    let asset_root = config.paths.root_dir.to_string_lossy().into_owned();
 
     App::new()
         .insert_resource(config)
@@ -37,7 +39,7 @@ fn run() -> Result<()> {
             file_path: asset_root,
             ..default()
         }))
-        .add_plugins(EnginePlugin)
+        .add_plugins((EnginePlugin, EditorPlugin))
         .run();
 
     Ok(())

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use avian3d::prelude::{
     AngularDamping, AngularVelocity, CcdFilter, Collider, ColliderDensity,
@@ -13,6 +13,7 @@ use crate::{
         RuntimeConfig, SweepModeDefinition, VisualDefinition,
     },
     persistence::{PersistRuntimeState, PersistentObjectId, WorldStateFile},
+    world::WorldInstanceEntity,
 };
 
 pub(super) fn spawn_world(
@@ -25,6 +26,12 @@ pub(super) fn spawn_world(
 ) {
     let mut mesh_cache = HashMap::<MeshKey, Handle<Mesh>>::new();
     let mut material_cache = HashMap::<VisualMaterialKey, Handle<StandardMaterial>>::new();
+    let asset_prefix = config
+        .paths
+        .assets_dir
+        .strip_prefix(&config.paths.root_dir)
+        .unwrap_or_else(|_| Path::new("assets"))
+        .to_owned();
 
     for instance in &config.world.objects {
         let definition = config
@@ -66,6 +73,7 @@ pub(super) fn spawn_world(
 
         let mut entity = commands.spawn((
             Name::new(instance.id.clone()),
+            WorldInstanceEntity,
             PersistentObjectId(instance.id.clone()),
             rigid_body,
             collider,
@@ -112,6 +120,7 @@ pub(super) fn spawn_world(
             &mut entity,
             definition,
             &asset_server,
+            &asset_prefix,
             &mut meshes,
             &mut materials,
             &mut mesh_cache,
@@ -131,6 +140,7 @@ fn add_visual(
     entity: &mut EntityCommands,
     definition: &ComponentDefinition,
     asset_server: &AssetServer,
+    asset_prefix: &Path,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     mesh_cache: &mut HashMap<MeshKey, Handle<Mesh>>,
@@ -149,9 +159,13 @@ fn add_visual(
             }
             None => (model_path.as_str(), 0),
         };
-        let scene_path = GltfAssetLabel::Scene(scene_index).from_asset(asset_path.to_owned());
+        let resolved_asset_path = asset_prefix.join(asset_path);
+        let resolved_asset_path = resolved_asset_path.to_string_lossy().replace('\\', "/");
+        let scene_path =
+            GltfAssetLabel::Scene(scene_index).from_asset(resolved_asset_path);
         entity.with_children(|children| {
             children.spawn((
+                WorldInstanceEntity,
                 WorldAssetRoot(asset_server.load(scene_path)),
                 Transform::default(),
             ));
