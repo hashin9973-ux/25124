@@ -1607,5 +1607,38 @@ mod preview_rig_tests {
                 joint.id
             );
         }
+
+        for (segment_id, proximal_joint_id, distal_joint_id) in [
+            ("upper_arm_l", "shoulder_l", "elbow_l"),
+            ("lower_arm_l", "elbow_l", "wrist_l"),
+            ("upper_arm_r", "shoulder_r", "elbow_r"),
+            ("lower_arm_r", "elbow_r", "wrist_r"),
+        ] {
+            let world_axis = transforms[segment_id].1 * Vec3::Y;
+
+            let joint_anchor = |joint_id: &str, segment_is_child: bool| {
+                let joint = rig
+                    .joints
+                    .iter()
+                    .find(|joint| joint.id == joint_id)
+                    .expect("arm joint should exist");
+                if segment_is_child {
+                    let (position, rotation) = transforms[&joint.child];
+                    position + rotation * Vec3::from_array(joint.anchor_child_m)
+                } else {
+                    let (position, rotation) = transforms[&joint.parent];
+                    position + rotation * Vec3::from_array(joint.anchor_parent_m)
+                }
+            };
+
+            let proximal = joint_anchor(proximal_joint_id, true);
+            let distal = joint_anchor(distal_joint_id, false);
+            let bone_axis = (distal - proximal).normalize();
+
+            assert!(
+                world_axis.dot(bone_axis) > 0.995,
+                "capsule axis for '{segment_id}' is not aligned with its authored bone axis"
+            );
+        }
     }
 }
