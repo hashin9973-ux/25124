@@ -141,7 +141,12 @@ fn build_surface_mesh(document: &MeshDocument) -> Result<Option<Mesh>> {
         for (corner, vertex_id) in face.vertices.iter().enumerate() {
             let position = *vertex_positions
                 .get(vertex_id.as_str())
-                .with_context(|| format!("face '{}' references missing vertex '{vertex_id}'", face.id))?;
+                .with_context(|| {
+                    format!(
+                        "face '{}' references missing vertex '{vertex_id}'",
+                        face.id
+                    )
+                })?;
             ensure!(
                 position.iter().all(|value| value.is_finite()),
                 "mesh '{}' contains a coordinate outside the renderer's float range",
@@ -232,7 +237,10 @@ pub(super) fn interact_with_meshes(
     if state.active_document_id.as_ref().is_none_or(|id| {
         !workspace.mesh_documents.iter().any(|document| &document.id == id)
     }) {
-        state.active_document_id = workspace.mesh_documents.first().map(|document| document.id.clone());
+        state.active_document_id = workspace
+            .mesh_documents
+            .first()
+            .map(|document| document.id.clone());
         state.selection.clear();
     }
 
@@ -249,7 +257,10 @@ pub(super) fn interact_with_meshes(
         return;
     }
 
-    if state.pointer_click_consumed || pending.0.is_some() || !mouse.just_pressed(MouseButton::Left) {
+    if state.pointer_click_consumed
+        || pending.0.is_some()
+        || !mouse.just_pressed(MouseButton::Left)
+    {
         return;
     }
 

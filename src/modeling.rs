@@ -581,7 +581,14 @@ impl MeshDocument {
                     candidate != previous
                         && candidate != current
                         && candidate != next
-                        && point_in_triangle_2d(projected[candidate], a, b, c, winding, area_epsilon)
+                        && point_in_triangle_2d(
+                            projected[candidate],
+                            a,
+                            b,
+                            c,
+                            winding,
+                            area_epsilon,
+                        )
                 });
                 if !contains_other_vertex {
                     ear = Some((cursor, [previous, current, next]));
@@ -748,7 +755,9 @@ pub fn save_mesh_document_with_backup(
                 })?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error).context("could not inspect previous mesh recovery file"),
+            Err(error) => {
+                return Err(error).context("could not inspect previous mesh recovery file");
+            }
         }
 
         fs::rename(&target, &backup).with_context(|| {
@@ -848,7 +857,12 @@ pub fn discover_mesh_documents(directory: &Path) -> Result<Vec<MeshDocument>> {
         );
         let canonical_backup = backup_path
             .canonicalize()
-            .with_context(|| format!("could not resolve mesh recovery file '{}'", backup_path.display()))?;
+            .with_context(|| {
+                format!(
+                    "could not resolve mesh recovery file '{}'",
+                    backup_path.display()
+                )
+            })?;
         ensure!(
             canonical_backup.starts_with(&canonical_directory),
             "mesh recovery file '{}' resolves outside its world-owned directory",
