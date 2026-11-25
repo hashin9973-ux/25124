@@ -1179,6 +1179,71 @@ mod tests {
     }
 
     #[test]
+    fn human_action_contract_validates_surface_geometry_and_rotation_thresholds() {
+        use std::collections::HashSet;
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = CharacterStudioWorkspace::load(
+            root,
+            &root.join("worlds/character_studio/data"),
+            "character_studio",
+        )
+        .expect("Character Studio data should load");
+        let rig = &workspace.rigs[0];
+        let segments = rig.segments.iter().map(|segment| segment.id.clone()).collect::<HashSet<_>>();
+        let joints = rig.joints.iter().map(|joint| joint.id.clone()).collect::<HashSet<_>>();
+        let action_set = &workspace.action_sets[0];
+
+        validate_action_set(
+            action_set,
+            &segments,
+            &joints,
+            &root.join("worlds/character_studio/outputs/actions/human.locomotion.actions.json"),
+        )
+        .expect("sample action contract should validate");
+
+        let action_kinds = action_set
+            .get("actions")
+            .and_then(Value::as_array)
+            .expect("actions array")
+            .iter()
+            .flat_map(|action| {
+                ["triggers", "conditions"]
+                    .into_iter()
+                    .flat_map(move |key| {
+                        action
+                            .get(key)
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|entry| entry.get("kind").and_then(Value::as_str))
+                    })
+            })
+            .collect::<HashSet<_>>();
+
+        assert!(action_kinds.contains("key_pressed"));
+        assert!(action_kinds.contains("key_held"));
+        assert!(action_kinds.contains("collision"));
+        assert!(action_kinds.contains("surface_contact"));
+        assert!(action_kinds.contains("surface_geometry"));
+        assert!(action_kinds.contains("joint_angle_threshold"));
+        assert!(action_kinds.contains("segment_rotation_threshold"));
+
+        let mut invalid = action_set.clone();
+        invalid["actions"][0]["actuators"][0]["torque_nm"] = serde_json::json!(1000.0);
+        assert!(
+            validate_action_set(
+                &invalid,
+                &segments,
+                &joints,
+                &root.join("invalid-action.json"),
+            )
+            .is_err(),
+            "action validator must reject torque commands above their authored limit"
+        );
+    }
+
+    #[test]
     fn world_catalog_paths_are_relative_and_contained() {
         assert!(validate_relative_path("worlds/character_studio/world.json").is_ok());
         assert!(validate_relative_path("../outside/world.json").is_err());

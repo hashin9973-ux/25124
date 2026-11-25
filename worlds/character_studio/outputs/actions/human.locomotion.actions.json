@@ -110,6 +110,43 @@
           ],
           "comparison": "less_than",
           "angle_degrees": 35
+        },
+        {
+          "kind": "surface_geometry",
+          "segments": [
+            "foot_l",
+            "foot_r"
+          ],
+          "geometry": {
+            "kind": "plane",
+            "normal_world": [
+              0,
+              1,
+              0
+            ],
+            "offset_m": 0
+          },
+          "surface_tags": [
+            "walkable",
+            "ground"
+          ],
+          "maximum_slope_degrees": 35
+        },
+        {
+          "kind": "segment_rotation_threshold",
+          "segment": "chest",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "reference_rotation_degrees_xyz": [
+            0,
+            0,
+            0
+          ],
+          "comparison": "less_than",
+          "angle_degrees": 30
         }
       ]
     },
@@ -167,6 +204,70 @@
         "priority": 30,
         "fade_in_s": 0.04,
         "fade_out_s": 0.2
+      }
+    },
+    {
+      "id": "manual.arm_brace",
+      "display_name": "Manual Arm Brace",
+      "activation": "on_trigger_edge",
+      "triggers": [
+        {
+          "id": "brace_key",
+          "kind": "key_pressed",
+          "key": "KeyE"
+        }
+      ],
+      "conditions": [
+        {
+          "kind": "surface_geometry",
+          "segments": [
+            "foot_l",
+            "foot_r"
+          ],
+          "geometry": {
+            "kind": "plane",
+            "normal_world": [
+              0,
+              1,
+              0
+            ],
+            "offset_m": 0
+          },
+          "surface_tags": [
+            "walkable",
+            "ground"
+          ],
+          "maximum_slope_degrees": 35
+        }
+      ],
+      "actuators": [
+        {
+          "joint": "elbow_l",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": 6,
+          "torque_limit_nm": 12
+        },
+        {
+          "joint": "elbow_r",
+          "kind": "joint_torque",
+          "axis_local": [
+            1,
+            0,
+            0
+          ],
+          "torque_nm": -6,
+          "torque_limit_nm": 12
+        }
+      ],
+      "blending": {
+        "priority": 20,
+        "fade_in_s": 0.08,
+        "fade_out_s": 0.16
       }
     }
   ],
