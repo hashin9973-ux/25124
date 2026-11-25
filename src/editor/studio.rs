@@ -122,7 +122,7 @@ fn spawn_studio_hint(commands: &mut Commands, camera: Entity) {
             Vec3::new(0.0, 0.025, -0.025),
         ] {
             parent.spawn((
-                Text2d::new("SHIFT+CLICK  MULTI-SELECT   E  EDGE   F  FACE   TAB  NEXT MESH"),
+                Text2d::new("SHIFT+CLICK  MULTI-SELECT   DEL  DELETE   E  EDGE   F  FACE   TAB  NEXT MESH"),
                 TextFont::from_font_size(17.0),
                 TextColor(Color::BLACK),
                 Anchor::Center,
@@ -130,7 +130,7 @@ fn spawn_studio_hint(commands: &mut Commands, camera: Entity) {
             ));
         }
         parent.spawn((
-            Text2d::new("SHIFT+CLICK  MULTI-SELECT   E  EDGE   F  FACE   TAB  NEXT MESH"),
+            Text2d::new("SHIFT+CLICK  MULTI-SELECT   DEL  DELETE   E  EDGE   F  FACE   TAB  NEXT MESH"),
             TextFont::from_font_size(17.0),
             TextColor(Color::WHITE),
             Anchor::Center,

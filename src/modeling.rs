@@ -316,6 +316,107 @@ impl MeshDocument {
         Ok(())
     }
 
+    /// Deletes selected topology while preserving all surviving references.
+    ///
+    /// Removing a vertex also removes its incident edges and every face using
+    /// that vertex. Removing an edge removes faces that use that boundary edge.
+    /// Removing a face alone preserves its vertices and edges. The operation is
+    /// transactional: invalid selections leave the original document unchanged.
+    pub fn delete_elements(
+        &mut self,
+        selected_vertex_ids: &[String],
+        selected_edge_ids: &[String],
+        selected_face_ids: &[String],
+    ) -> Result<()> {
+        self.validate()?;
+        ensure!(
+            !selected_vertex_ids.is_empty()
+                || !selected_edge_ids.is_empty()
+                || !selected_face_ids.is_empty(),
+            "mesh deletion selection cannot be empty"
+        );
+
+        let vertex_ids = selected_vertex_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let edge_ids = selected_edge_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let face_ids = selected_face_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        ensure!(
+            vertex_ids.len() == selected_vertex_ids.len()
+                && edge_ids.len() == selected_edge_ids.len()
+                && face_ids.len() == selected_face_ids.len(),
+            "mesh deletion selection contains duplicate ids"
+        );
+
+        for id in &vertex_ids {
+            ensure!(
+                self.vertices.iter().any(|vertex| vertex.id.as_str() == *id),
+                "mesh deletion references unknown vertex '{}'",
+                id
+            );
+        }
+        for id in &edge_ids {
+            ensure!(
+                self.edges.iter().any(|edge| edge.id.as_str() == *id),
+                "mesh deletion references unknown edge '{}'",
+                id
+            );
+        }
+        for id in &face_ids {
+            ensure!(
+                self.faces.iter().any(|face| face.id.as_str() == *id),
+                "mesh deletion references unknown face '{}'",
+                id
+            );
+        }
+
+        let mut updated = self.clone();
+        let removed_edge_pairs = updated
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge_ids.contains(edge.id.as_str())
+                    || vertex_ids.contains(edge.vertices[0].as_str())
+                    || vertex_ids.contains(edge.vertices[1].as_str())
+            })
+            .map(|edge| canonical_edge(&edge.vertices[0], &edge.vertices[1]))
+            .collect::<HashSet<_>>();
+
+        updated.faces.retain(|face| {
+            let touches_removed_vertex = face
+                .vertices
+                .iter()
+                .any(|id| vertex_ids.contains(id.as_str()));
+            let touches_removed_edge = (0..face.vertices.len()).any(|index| {
+                let first = &face.vertices[index];
+                let second = &face.vertices[(index + 1) % face.vertices.len()];
+                removed_edge_pairs.contains(&canonical_edge(first, second))
+            });
+            !face_ids.contains(face.id.as_str())
+                && !touches_removed_vertex
+                && !touches_removed_edge
+        });
+        updated.edges.retain(|edge| {
+            !edge_ids.contains(edge.id.as_str())
+                && !vertex_ids.contains(edge.vertices[0].as_str())
+                && !vertex_ids.contains(edge.vertices[1].as_str())
+        });
+        updated
+            .vertices
+            .retain(|vertex| !vertex_ids.contains(vertex.id.as_str()));
+
+        updated.validate()?;
+        *self = updated;
+        Ok(())
+    }
+
     /// Extrudes a polygon along its normalized Newell face normal.
     ///
     /// The source face remains as the base. Side quads and a translated cap
@@ -1182,6 +1283,59 @@ mod tests {
             .unwrap();
         assert_eq!(mesh.vertices[0].position_m, [0.0, 0.0, 2.0]);
         mesh.validate().unwrap();
+    }
+
+    #[test]
+    fn deleting_vertex_removes_incident_edges_and_dependent_faces() {
+        let mut mesh = triangle_document();
+
+        mesh.delete_elements(&["v0".to_owned()], &[], &[]).unwrap();
+
+        assert_eq!(
+            mesh.vertices.iter().map(|vertex| vertex.id.as_str()).collect::<Vec<_>>(),
+            vec!["v1", "v2"]
+        );
+        assert!(mesh.edges.is_empty());
+        assert!(mesh.faces.is_empty());
+        mesh.validate().unwrap();
+    }
+
+    #[test]
+    fn deleting_edge_removes_dependent_faces_but_preserves_other_topology() {
+        let mut mesh = triangle_document();
+
+        mesh.delete_elements(&[], &["e0".to_owned()], &[]).unwrap();
+
+        assert_eq!(mesh.vertices.len(), 3);
+        assert_eq!(
+            mesh.edges.iter().map(|edge| edge.id.as_str()).collect::<Vec<_>>(),
+            vec!["e1", "e2"]
+        );
+        assert!(mesh.faces.is_empty());
+        mesh.validate().unwrap();
+    }
+
+    #[test]
+    fn deleting_face_preserves_its_boundary_vertices_and_edges() {
+        let mut mesh = triangle_document();
+
+        mesh.delete_elements(&[], &[], &["f0".to_owned()]).unwrap();
+
+        assert_eq!(mesh.vertices.len(), 3);
+        assert_eq!(mesh.edges.len(), 3);
+        assert!(mesh.faces.is_empty());
+        mesh.validate().unwrap();
+    }
+
+    #[test]
+    fn invalid_mesh_deletion_is_atomic() {
+        let mut mesh = triangle_document();
+        let original = mesh.clone();
+
+        assert!(mesh.delete_elements(&["missing".to_owned()], &[], &[]).is_err());
+        assert_eq!(mesh, original);
+        assert!(mesh.delete_elements(&["v0".to_owned(), "v0".to_owned()], &[], &[]).is_err());
+        assert_eq!(mesh, original);
     }
 
     #[test]

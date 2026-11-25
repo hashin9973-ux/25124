@@ -248,6 +248,13 @@ pub(super) fn interact_with_meshes(
         state.selection.clear();
     }
 
+    if keys.just_pressed(KeyCode::Delete) {
+        if let Err(error) = delete_selected_elements(&active_world, &mut workspace, &mut state) {
+            warn!("Could not delete the current mesh selection: {error:#}");
+        }
+        return;
+    }
+
     if keys.just_pressed(KeyCode::KeyE) && state.mode == MeshElementMode::Vertex {
         if let Err(error) = create_edge_from_selection(&active_world, &mut workspace, &mut state) {
             warn!("Could not create edge from the current vertex selection: {error:#}");
@@ -571,6 +578,46 @@ fn ray_plane_intersection(
     }
     let distance = (plane_origin - ray_origin).dot(normal) / denominator;
     (distance >= 0.0 && distance.is_finite()).then_some(ray_origin + direction * distance)
+}
+
+fn delete_selected_elements(
+    active_world: &ActiveWorld,
+    workspace: &mut CharacterStudioWorkspace,
+    state: &mut MeshViewportState,
+) -> Result<()> {
+    ensure!(
+        !state.selection.is_empty(),
+        "select mesh elements before pressing Delete"
+    );
+
+    let document_id = state
+        .active_document_id
+        .as_deref()
+        .context("no active mesh document is selected")?;
+    let document_index = workspace
+        .mesh_documents
+        .iter()
+        .position(|document| document.id == document_id)
+        .context("active mesh document is not loaded")?;
+
+    let mut vertex_ids = Vec::new();
+    let mut edge_ids = Vec::new();
+    let mut face_ids = Vec::new();
+    for element in &state.selection {
+        match element {
+            SelectedMeshElement::Vertex(id) => vertex_ids.push(id.clone()),
+            SelectedMeshElement::Edge(id) => edge_ids.push(id.clone()),
+            SelectedMeshElement::Face(id) => face_ids.push(id.clone()),
+        }
+    }
+
+    let previous = workspace.mesh_documents[document_index].clone();
+    let mut updated = previous.clone();
+    updated.delete_elements(&vertex_ids, &edge_ids, &face_ids)?;
+    persist_mesh_document(active_world, workspace, &previous, &updated)?;
+    workspace.mesh_documents[document_index] = updated;
+    state.selection.clear();
+    Ok(())
 }
 
 fn create_edge_from_selection(

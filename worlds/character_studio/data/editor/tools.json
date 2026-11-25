@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "Character Studio starts empty and does not prescribe a species, anatomy, rig or model. The mesh viewport renders the active authored mesh and configured construction-plane grid, supports vertex/edge/face ray picking, vertex placement, edge/face creation, document cycling, and version-checked persistence with previous-generation recovery. Translation, rotation, scale, deletion, undo/redo and modifier evaluation are not yet exposed in the viewport.",
+  "note": "Character Studio starts empty and does not prescribe a species, anatomy, rig or model. The mesh viewport renders the active authored mesh and configured construction-plane grid, supports vertex/edge/face ray picking, vertex placement, edge/face creation, topology deletion with dependent-face cleanup, document cycling, and version-checked persistence with previous-generation recovery. Translation, rotation, and scale gizmos, undo/redo, and modifier evaluation are not yet exposed in the viewport.",
   "implemented_foundation": [
     "world_browser",
     "world_local_data_loading",
@@ -54,7 +54,9 @@
         "construction_plane_vertex_placement",
         "construction_plane_grid",
         "version_checked_mesh_save",
-        "previous_generation_recovery"
+        "previous_generation_recovery",
+        "delete_elements",
+        "viewport_delete_selection"
       ]
     },
     {
