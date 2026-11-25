@@ -38,28 +38,45 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.3
 
-      - name: Resolve and lock Rust dependencies
-        run: cargo generate-lockfile
-
-      - name: Export generated Cargo.lock
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-cargo-lock
-          path: Cargo.lock
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Type-check all targets
-        run: cargo check --locked --all-targets
+        run: cargo check --all-targets
 
       - name: Run tests
-        run: cargo test --locked --all-targets
+        run: cargo test --all-targets
 
       - name: Run Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
+
+  bootstrap-lockfile:
+    name: Commit Cargo.lock once when absent
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate and commit the application lockfile
+        shell: bash
+        run: |
+          if [[ -f Cargo.lock ]]; then
+            echo "Cargo.lock already exists; no bootstrap is needed."
+            exit 0
+          fi
+
+          cargo generate-lockfile
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "Add Cargo.lock"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
   windows-portable-package:
     name: Build and verify Windows portable package
