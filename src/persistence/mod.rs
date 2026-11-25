@@ -2,7 +2,7 @@ mod state;
 
 pub use state::WorldStateFile;
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::{BTreeMap, HashSet}, path::PathBuf};
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
@@ -28,6 +28,18 @@ impl Plugin for PersistencePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, save_world_on_f5);
     }
+}
+
+fn unresolved_body_states(
+    previous_state: &WorldStateFile,
+    known_instance_ids: &HashSet<&str>,
+) -> BTreeMap<String, PersistedBodyState> {
+    previous_state
+        .bodies
+        .iter()
+        .filter(|(id, _)| !known_instance_ids.contains(id.as_str()))
+        .map(|(id, state)| (id.clone(), state.clone()))
+        .collect()
 }
 
 fn save_world_on_f5(
@@ -59,12 +71,7 @@ fn save_world_on_f5(
     // Preserve unresolved records so temporarily unavailable content can be restored later.
     // Known static-body records are deliberately omitted: static placement belongs to the manifest.
     let mut snapshot = WorldStateFile::new(target.world_id.clone());
-    snapshot.bodies = previous_state
-        .bodies
-        .iter()
-        .filter(|(id, _)| !known_instance_ids.contains(id.as_str()))
-        .map(|(id, state)| (id.clone(), state.clone()))
-        .collect();
+    snapshot.bodies = unresolved_body_states(&previous_state, &known_instance_ids);
 
     for (id, transform, linear_velocity, angular_velocity) in &bodies {
         snapshot.bodies.insert(
@@ -93,9 +100,9 @@ fn save_world_on_f5(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashSet};
+    use std::collections::HashSet;
 
-    use super::{PersistedBodyState, WorldStateFile};
+    use super::{PersistedBodyState, WorldStateFile, unresolved_body_states};
 
     #[test]
     fn save_snapshot_preserves_only_records_not_owned_by_current_world_instances() {
@@ -113,12 +120,7 @@ mod tests {
         }
 
         let known_instance_ids = HashSet::from(["dynamic", "static"]);
-        let unresolved: BTreeMap<_, _> = previous
-            .bodies
-            .iter()
-            .filter(|(id, _)| !known_instance_ids.contains(id.as_str()))
-            .map(|(id, state)| (id.clone(), state.clone()))
-            .collect();
+        let unresolved = unresolved_body_states(&previous, &known_instance_ids);
 
         assert_eq!(unresolved.len(), 1);
         assert!(unresolved.contains_key("unresolved-mod-object"));
