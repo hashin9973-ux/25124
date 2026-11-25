@@ -45,7 +45,11 @@ fn run() -> Result<()> {
 
 fn report_saved_state_compatibility(config: &RuntimeConfig, world_state: &WorldStateFile) {
     for id in world_state.bodies.keys() {
-        let Some(instance) = config.world.objects.iter().find(|instance| instance.id == *id)
+        let Some(instance) = config
+            .world
+            .objects
+            .iter()
+            .find(|instance| instance.id == *id)
         else {
             eprintln!(
                 "Warning: save contains unresolved object id '{id}'. Its state is preserved for content that may be loaded later."

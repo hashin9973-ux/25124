@@ -11,7 +11,7 @@ use crate::{
         AlphaMode, BodyType, CcdFilterDefinition, ColliderShape, ComponentDefinition,
         RuntimeConfig, SweepModeDefinition, VisualDefinition,
     },
-    persistence::{PersistentObjectId, PersistRuntimeState, WorldStateFile},
+    persistence::{PersistRuntimeState, PersistentObjectId, WorldStateFile},
 };
 
 pub(super) fn spawn_world(

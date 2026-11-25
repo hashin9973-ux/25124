@@ -306,21 +306,29 @@ mod tests {
         use super::validate_collider;
         use crate::config::ColliderShape;
 
-        assert!(validate_collider(
-            &ColliderShape::Cuboid {
-                half_extents: [0.5, 0.5, 0.5]
-            },
-            "valid-cuboid"
-        ).is_ok());
+        assert!(
+            validate_collider(
+                &ColliderShape::Cuboid {
+                    half_extents: [0.5, 0.5, 0.5]
+                },
+                "valid-cuboid"
+            )
+            .is_ok()
+        );
         assert!(validate_collider(&ColliderShape::Sphere { radius: 0.5 }, "valid-sphere").is_ok());
-        assert!(validate_collider(
-            &ColliderShape::Capsule {
-                radius: 0.25,
-                segment_length: 0.5
-            },
-            "valid-capsule"
-        ).is_ok());
-        assert!(validate_collider(&ColliderShape::Sphere { radius: 0.0 }, "invalid-sphere").is_err());
+        assert!(
+            validate_collider(
+                &ColliderShape::Capsule {
+                    radius: 0.25,
+                    segment_length: 0.5
+                },
+                "valid-capsule"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_collider(&ColliderShape::Sphere { radius: 0.0 }, "invalid-sphere").is_err()
+        );
     }
 
     #[test]
