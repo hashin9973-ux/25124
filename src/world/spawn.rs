@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use avian3d::prelude::{
-    AngularVelocity, CcdFilter, Collider, ColliderDensity, CollisionEventsEnabled, Friction,
-    LinearVelocity, Restitution, RigidBody, SweepMode, SweptCcd,
+    AngularDamping, AngularVelocity, CcdFilter, Collider, ColliderDensity,
+    CollisionEventsEnabled, Friction, LinearDamping, LinearVelocity, Restitution, RigidBody,
+    SweepMode, SweptCcd,
 };
 use bevy::{gltf::prelude::GltfAssetLabel, prelude::*};
 
@@ -82,7 +83,11 @@ pub(super) fn spawn_world(
         ));
 
         if matches!(definition.body_type, BodyType::Dynamic) {
-            entity.insert(PersistRuntimeState);
+            entity.insert((
+                PersistRuntimeState,
+                LinearDamping(physical_material.linear_damping),
+                AngularDamping(physical_material.angular_damping),
+            ));
         }
 
         if let Some(ccd) = &definition.swept_ccd {

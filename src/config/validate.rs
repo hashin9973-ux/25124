@@ -55,6 +55,11 @@ pub fn validate_all(
         (1..=64).contains(&physics.substeps),
         "physics.substeps must be between 1 and 64"
     );
+    ensure!(
+        physics.restitution_threshold_m_s.is_finite()
+            && physics.restitution_threshold_m_s >= 0.0,
+        "physics.restitution_threshold_m_s must be finite and non-negative"
+    );
 
     let camera = &engine.camera;
     ensure!(
@@ -118,6 +123,14 @@ pub fn validate_all(
         ensure!(
             material.restitution.is_finite() && (0.0..=1.0).contains(&material.restitution),
             "material '{id}' restitution must be in [0, 1]"
+        );
+        ensure!(
+            material.linear_damping.is_finite() && material.linear_damping >= 0.0,
+            "material '{id}' linear damping must be finite and non-negative"
+        );
+        ensure!(
+            material.angular_damping.is_finite() && material.angular_damping >= 0.0,
+            "material '{id}' angular damping must be finite and non-negative"
         );
     }
 

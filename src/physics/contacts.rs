@@ -32,12 +32,6 @@ pub struct ContactLedger {
     pub total_ended: u64,
 }
 
-impl ContactLedger {
-    pub fn active_count(&self) -> usize {
-        self.active_pairs.len()
-    }
-}
-
 pub(super) fn collect_contact_transitions(
     mut starts: MessageReader<CollisionStart>,
     mut ends: MessageReader<CollisionEnd>,

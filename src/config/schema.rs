@@ -18,6 +18,8 @@ pub struct PhysicsSettings {
     pub gravity_m_s2: [f32; 3],
     pub fixed_hz: f64,
     pub substeps: u32,
+    /// Minimum normal impact speed required before restitution is applied.
+    pub restitution_threshold_m_s: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -53,6 +55,10 @@ pub struct MaterialDefinition {
     pub static_friction: f32,
     pub dynamic_friction: f32,
     pub restitution: f32,
+    #[serde(default)]
+    pub linear_damping: f32,
+    #[serde(default)]
+    pub angular_damping: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]

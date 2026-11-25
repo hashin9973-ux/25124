@@ -2,28 +2,36 @@
   "schema_version": 1,
   "materials": {
     "concrete": {
-      "density_kg_m3": 2400.0,
-      "static_friction": 0.80,
+      "density_kg_m3": 2400,
+      "static_friction": 0.8,
       "dynamic_friction": 0.65,
-      "restitution": 0.04
+      "restitution": 0.04,
+      "linear_damping": 0,
+      "angular_damping": 0
     },
     "structural_steel": {
-      "density_kg_m3": 7850.0,
+      "density_kg_m3": 7850,
       "static_friction": 0.74,
       "dynamic_friction": 0.57,
-      "restitution": 0.08
+      "restitution": 0.08,
+      "linear_damping": 0,
+      "angular_damping": 0
     },
     "timber": {
-      "density_kg_m3": 650.0,
+      "density_kg_m3": 650,
       "static_friction": 0.55,
-      "dynamic_friction": 0.40,
-      "restitution": 0.12
+      "dynamic_friction": 0.4,
+      "restitution": 0.12,
+      "linear_damping": 0,
+      "angular_damping": 0
     },
     "rubber": {
-      "density_kg_m3": 1100.0,
-      "static_friction": 1.00,
+      "density_kg_m3": 1100,
+      "static_friction": 1,
       "dynamic_friction": 0.82,
-      "restitution": 0.75
+      "restitution": 0.2,
+      "linear_damping": 0.12,
+      "angular_damping": 0.18
     }
   }
 }

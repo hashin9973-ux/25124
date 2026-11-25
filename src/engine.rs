@@ -1,4 +1,4 @@
-use avian3d::prelude::{Gravity, PhysicsPlugins, SubstepCount};
+use avian3d::prelude::{Gravity, PhysicsPlugins, SolverConfig, SubstepCount};
 use bevy::prelude::*;
 
 use crate::{
@@ -23,6 +23,10 @@ impl Plugin for EnginePlugin {
         app.add_plugins(PhysicsPlugins::default())
             .insert_resource(Time::<Fixed>::from_hz(config.engine.physics.fixed_hz))
             .insert_resource(SubstepCount(config.engine.physics.substeps))
+            .insert_resource(SolverConfig {
+                restitution_threshold: config.engine.physics.restitution_threshold_m_s,
+                ..default()
+            })
             .insert_resource(Gravity(Vec3::from_array(gravity)))
             .insert_resource(WorldSaveTarget {
                 world_id: config.world.id.clone(),
