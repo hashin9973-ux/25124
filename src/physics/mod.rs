@@ -1,6 +1,6 @@
 mod contacts;
 
-pub use contacts::{ContactLedger, ContactPair};
+pub use contacts::ContactLedger;
 
 use bevy::prelude::*;
 
