@@ -38,6 +38,22 @@ impl Plugin for EnginePlugin {
                 CameraPlugin,
                 ContactPlugin,
                 PersistencePlugin,
-            ));
+            ))
+            .add_systems(Update, sync_world_physics_settings);
     }
+}
+
+fn sync_world_physics_settings(
+    config: Res<RuntimeConfig>,
+    mut fixed_time: ResMut<Time<Fixed>>,
+    mut substeps: ResMut<SubstepCount>,
+    mut solver: ResMut<SolverConfig>,
+) {
+    if !config.is_changed() {
+        return;
+    }
+
+    *fixed_time = Time::<Fixed>::from_hz(config.engine.physics.fixed_hz);
+    *substeps = SubstepCount(config.engine.physics.substeps);
+    solver.restitution_threshold = config.engine.physics.restitution_threshold_m_s;
 }

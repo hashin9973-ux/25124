@@ -126,13 +126,17 @@ pub(super) fn animate_water(
             .last_cursor
             .is_some_and(|last| (cursor - last).length_squared() > 2.0);
         if moved && elapsed - ripples.last_pointer_impulse >= 0.075 {
-            if let Some(point) = pointer_world {
+            if let Some(point) = pointer_world.filter(|point| {
+                point.x.abs() <= WATER_SIZE * 0.5 && point.z.abs() <= WATER_SIZE * 0.5
+            }) {
                 ripples.push(Vec2::new(point.x, point.z), elapsed, 0.23, 6.4, 4.0);
                 ripples.last_pointer_impulse = elapsed;
             }
         }
         if mouse_buttons.just_pressed(MouseButton::Left) {
-            if let Some(point) = pointer_world {
+            if let Some(point) = pointer_world.filter(|point| {
+                point.x.abs() <= WATER_SIZE * 0.5 && point.z.abs() <= WATER_SIZE * 0.5
+            }) {
                 ripples.push(Vec2::new(point.x, point.z), elapsed, 0.62, 5.1, 3.5);
                 ripples.last_pointer_impulse = elapsed;
             }
@@ -161,42 +165,50 @@ pub(super) fn animate_water(
             continue;
         };
         let vertex_count = (surface.grid + 1) * (surface.grid + 1);
+        let row = surface.grid + 1;
         let mut positions = Vec::with_capacity(vertex_count);
         let mut normals = Vec::with_capacity(vertex_count);
         let mut uvs = Vec::with_capacity(vertex_count);
+        let mut heights = Vec::with_capacity(vertex_count);
         let step = surface.size / surface.grid as f32;
         let half = surface.size * 0.5;
-        let normal_step = step * 0.45;
 
+        // Evaluate the wave field once per vertex. Derive normals from the height
+        // buffer so active ripples are not recomputed four extra times per vertex.
         for z_index in 0..=surface.grid {
             let z = z_index as f32 * step - half;
             for x_index in 0..=surface.grid {
                 let x = x_index as f32 * step - half;
                 let height = water_height(Vec2::new(x, z), elapsed, &ripples.ripples);
-                let dx = (water_height(
-                    Vec2::new(x + normal_step, z),
-                    elapsed,
-                    &ripples.ripples,
-                ) - water_height(
-                    Vec2::new(x - normal_step, z),
-                    elapsed,
-                    &ripples.ripples,
-                )) / (normal_step * 2.0);
-                let dz = (water_height(
-                    Vec2::new(x, z + normal_step),
-                    elapsed,
-                    &ripples.ripples,
-                ) - water_height(
-                    Vec2::new(x, z - normal_step),
-                    elapsed,
-                    &ripples.ripples,
-                )) / (normal_step * 2.0);
+                heights.push(height);
                 positions.push([x, height, z]);
-                normals.push(Vec3::new(-dx, 1.0, -dz).normalize().to_array());
                 uvs.push([
                     x_index as f32 / surface.grid as f32 * 7.0,
                     z_index as f32 / surface.grid as f32 * 7.0,
                 ]);
+            }
+        }
+
+        for z_index in 0..=surface.grid {
+            for x_index in 0..=surface.grid {
+                let left = z_index * row + x_index.saturating_sub(1);
+                let right = z_index * row + (x_index + 1).min(surface.grid);
+                let back = z_index.saturating_sub(1) * row + x_index;
+                let front = (z_index + 1).min(surface.grid) * row + x_index;
+
+                let x_span = if x_index == 0 || x_index == surface.grid {
+                    step
+                } else {
+                    step * 2.0
+                };
+                let z_span = if z_index == 0 || z_index == surface.grid {
+                    step
+                } else {
+                    step * 2.0
+                };
+                let dx = (heights[right] - heights[left]) / x_span;
+                let dz = (heights[front] - heights[back]) / z_span;
+                normals.push(Vec3::new(-dx, 1.0, -dz).normalize().to_array());
             }
         }
 

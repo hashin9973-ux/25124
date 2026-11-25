@@ -27,6 +27,12 @@ pub enum MenuAction {
 #[derive(Resource, Default)]
 struct PendingMenuCommand(Option<MenuAction>);
 
+#[derive(Resource, Default)]
+struct WorldBrowserPage(usize);
+
+#[derive(Resource, Default)]
+struct MenuSceneDirty(bool);
+
 pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
@@ -44,6 +50,8 @@ impl Plugin for EditorPlugin {
             .init_resource::<ActiveWorld>()
             .init_resource::<CharacterStudioWorkspace>()
             .init_resource::<PendingMenuCommand>()
+            .init_resource::<WorldBrowserPage>()
+            .init_resource::<MenuSceneDirty>()
             .init_resource::<water::RippleField>()
             .add_systems(Startup, catalog::load_world_catalog)
             .add_systems(OnEnter(EditorScreen::MainMenu), menu::spawn_main_menu)
@@ -71,6 +79,7 @@ impl Plugin for EditorPlugin {
                 (
                     menu::interact_callouts,
                     catalog::process_menu_command,
+                    menu::refresh_world_browser,
                     water::animate_water,
                 )
                     .chain()
@@ -89,9 +98,26 @@ impl Plugin for EditorPlugin {
 
 fn return_to_menu(
     keys: Res<ButtonInput<KeyCode>>,
+    mut active_world: ResMut<ActiveWorld>,
+    mut studio_workspace: ResMut<CharacterStudioWorkspace>,
     mut next_screen: ResMut<NextState<EditorScreen>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
+        info!(
+            "Leaving world {:?} ({:?}); outputs directory: {:?}",
+            active_world.id,
+            active_world.kind,
+            active_world.outputs_dir
+        );
+        if !studio_workspace.display_name.is_empty() {
+            info!(
+                "Closed workspace '{}' using {} units",
+                studio_workspace.display_name,
+                studio_workspace.units
+            );
+        }
+        *active_world = ActiveWorld::default();
+        *studio_workspace = CharacterStudioWorkspace::default();
         next_screen.set(EditorScreen::MainMenu);
     }
 }
