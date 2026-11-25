@@ -52,7 +52,9 @@ The free-fly editor camera is non-physical. It is not a character controller.
 
 Character Studio is a separate, world-owned authoring workspace. Its checked-in world manifest contains no instances, its species index is empty, and its action-set index is empty. Opening it does not spawn a model, rig, ragdoll, floor, workbench or reference object.
 
-Choose **Create Mesh** in the Character Studio viewport to create a persisted, empty mesh document in the world's `outputs/models/` directory. Mesh documents store generic vertices, explicit edges, ordered polygon boundary loops, optional per-corner UV coordinates and optional material references. The modeling core validates references, duplicate topology, degenerate faces, and finite geometry. Its initial operations include adding vertices/edges/faces, translating selected vertices, and transactional face extrusion. These topology operations currently mutate in-memory documents; a user-facing edit/commit/save loop and crash-safe in-place mesh replacement are not wired yet. This is a data/topology foundation; vertex/edge/face selection tools, visible mesh previews and interactive modeling controls are not implemented yet.
+Choose **Create Mesh** in the Character Studio viewport to create a persisted, empty mesh document in the world's `outputs/models/` directory. Mesh documents store generic vertices, explicit edges, ordered polygon boundary loops, optional per-corner UV coordinates and optional material references. The modeling core validates references, duplicate topology, degenerate faces, simple planar polygon boundaries and finite geometry. Concave polygons are triangulated with ear clipping rather than a convex-only triangle fan.
+
+The viewport renders the active mesh document over the configured construction-plane grid and supports ray-based vertex, edge and face picking. In Vertex mode, a click on the construction plane creates a vertex; hold Shift while clicking to build an ordered multi-selection. Press E with at least two selected vertices to create an edge between the last two selected vertices. Press F with at least three selected vertices to close their ordered loop into a face. The on-screen mode callouts and 1/2/3 shortcuts select Vertex, Edge and Face modes; Tab cycles loaded mesh documents. Each edit is staged, checked against the previously loaded on-disk document to reject stale writes, and preserves the previous generation as `.mesh.json.prev`. Startup restores that generation when an interrupted replacement leaves the primary file missing. This is optimistic version checking, not a cross-process file lock or a guarantee against every power-loss timing. Programmatic vertex translation and face extrusion exist in the modeling core but do not yet have interactive controls. Rotate, scale, deletion, undo/redo, and modifier evaluation are also incomplete.
 
 Choose **Create Species** in the Character Studio viewport to create a persisted draft. The editor assigns a unique generic identifier, writes a species definition with no model or rig, and registers it in the studio's species index. It does not generate geometry, anatomical segments, joints, animations or actions. The draft is user-owned content and can be renamed as it is authored.
 
@@ -73,8 +75,9 @@ cargo run --locked
 The menu opens first. Choose Worlds and select a catalog entry. In a loaded world:
 - W / A / S / D: free-fly camera movement
 - Space / Left Ctrl: camera up/down
-- Left Shift: sprint
-- Mouse: look
+- Left Shift: sprint; Shift+click in Character Studio adds/removes mesh elements from the selection
+- Mouse: look; left click in Character Studio selects elements or places vertices in Vertex mode
+- Character Studio: 1 / 2 / 3 select Vertex / Edge / Face mode; E creates an edge; F creates a face; Tab cycles mesh documents
 - F5: save the active world's dynamic body state
 - Escape: return to the main menu
 

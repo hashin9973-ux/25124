@@ -59,7 +59,8 @@
       "add_edge",
       "create_face",
       "translate_vertices",
-      "extrude_face"
+      "extrude_face",
+      "construction_plane_grid"
     ]
   },
   "symmetry": {
@@ -78,5 +79,19 @@
       "object"
     ],
     "supports_hierarchy": true
+  },
+  "construction_plane": {
+    "origin_m": [
+      0,
+      0,
+      0
+    ],
+    "normal_world": [
+      0,
+      1,
+      0
+    ],
+    "grid_spacing_m": 0.25,
+    "grid_extent_m": 5
   }
 }

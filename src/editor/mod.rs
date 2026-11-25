@@ -1,5 +1,6 @@
 mod catalog;
 mod menu;
+mod mesh_viewport;
 mod studio;
 mod water;
 
@@ -60,6 +61,8 @@ impl Plugin for EditorPlugin {
             .init_resource::<ActiveWorld>()
             .init_resource::<CharacterStudioWorkspace>()
             .init_resource::<PendingMenuCommand>()
+            .init_resource::<mesh_viewport::MeshViewportState>()
+            .init_resource::<mesh_viewport::RenderedMeshSnapshot>()
             .init_resource::<WorldBrowserPage>()
             .init_resource::<MenuSceneDirty>()
             .init_resource::<water::RippleField>()
@@ -98,9 +101,13 @@ impl Plugin for EditorPlugin {
             .add_systems(
                 Update,
                 (
+                    mesh_viewport::begin_interaction_frame,
                     studio::ensure_studio_callouts,
                     studio::interact_callouts,
+                    mesh_viewport::interact_with_meshes,
                     catalog::process_menu_command,
+                    mesh_viewport::sync_mesh_surfaces,
+                    mesh_viewport::draw_mesh_overlay,
                     return_to_menu,
                 )
                     .chain()
@@ -117,6 +124,8 @@ fn return_to_menu(
     keys: Res<ButtonInput<KeyCode>>,
     mut active_world: ResMut<ActiveWorld>,
     mut studio_workspace: ResMut<CharacterStudioWorkspace>,
+    mut mesh_viewport: ResMut<mesh_viewport::MeshViewportState>,
+    mut rendered_mesh: ResMut<mesh_viewport::RenderedMeshSnapshot>,
     mut next_screen: ResMut<NextState<EditorScreen>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -135,6 +144,8 @@ fn return_to_menu(
         }
         *active_world = ActiveWorld::default();
         *studio_workspace = CharacterStudioWorkspace::default();
+        *mesh_viewport = mesh_viewport::MeshViewportState::default();
+        *rendered_mesh = mesh_viewport::RenderedMeshSnapshot::default();
         next_screen.set(EditorScreen::MainMenu);
     }
 }

@@ -120,6 +120,41 @@ jobs:
             throw "Character Studio must start with an empty world composition"
           }
 
+          $studioWorkspace = Get-Content -LiteralPath (Join-Path $root "worlds/character_studio/data/editor/workspace.json") -Raw | ConvertFrom-Json
+          $modelingSettingsPath = Join-Path $root ("worlds/character_studio/data/" + $studioWorkspace.modeling_settings)
+          if (-not (Test-Path -LiteralPath $modelingSettingsPath -PathType Leaf)) {
+            throw "Character Studio modeling settings path does not exist: $($studioWorkspace.modeling_settings)"
+          }
+          $modelingSettings = Get-Content -LiteralPath $modelingSettingsPath -Raw | ConvertFrom-Json
+          if ($modelingSettings.schema_version -ne 1) {
+            throw "Unsupported Character Studio modeling settings schema"
+          }
+          $planeNormal = @($modelingSettings.construction_plane.normal_world | ForEach-Object { [double]$_ })
+          $normalSquared = 0.0
+          $planeNormalValid = $planeNormal.Count -eq 3
+          foreach ($component in $planeNormal) {
+            if (-not [double]::IsFinite($component)) {
+              $planeNormalValid = $false
+            }
+            $normalSquared += $component * $component
+          }
+          if (-not $planeNormalValid) {
+            throw "Character Studio construction plane normal must contain three finite components"
+          }
+          $normalLength = [Math]::Sqrt($normalSquared)
+          if (-not [double]::IsFinite($normalLength) -or $normalLength -le 1.0e-12) {
+            throw "Character Studio construction plane normal must be non-zero"
+          }
+          $gridSpacing = [double]$modelingSettings.construction_plane.grid_spacing_m
+          $gridExtent = [double]$modelingSettings.construction_plane.grid_extent_m
+          if (
+            -not [double]::IsFinite($gridSpacing) -or $gridSpacing -le 0 -or
+            -not [double]::IsFinite($gridExtent) -or $gridExtent -le 0 -or
+            ($gridExtent / $gridSpacing) -gt 100
+          ) {
+            throw "Character Studio construction plane grid spacing/extent must be positive and bounded to 100 intervals per side"
+          }
+
           foreach ($world in $catalog.worlds) {
             foreach ($field in @("manifest", "data", "assets", "outputs")) {
               $relative = [string]$world.$field

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "Mesh topology and persistence have a reusable runtime core. The viewport currently creates empty documents; vertex and edge selection/editing UI remains incomplete.",
+  "note": "Character Studio starts empty and does not prescribe a species, anatomy, rig or model. The mesh viewport renders the active authored mesh and configured construction-plane grid, supports vertex/edge/face ray picking, vertex placement, edge/face creation, document cycling, and version-checked persistence with previous-generation recovery. Translation, rotation, scale, deletion, undo/redo and modifier evaluation are not yet exposed in the viewport.",
   "implemented_foundation": [
     "world_browser",
     "world_local_data_loading",
@@ -12,13 +12,14 @@
     "mesh_document_persistence",
     "mesh_topology_validation",
     "mesh_vertex_translation",
-    "mesh_face_extrusion"
+    "mesh_face_extrusion",
+    "construction_plane_grid"
   ],
   "tool_groups": [
     {
       "id": "mesh_edit",
       "name": "Mesh Editing",
-      "status": "topology_core",
+      "status": "viewport_editing_foundation",
       "selection_modes": [
         "vertex",
         "edge",
@@ -46,7 +47,14 @@
         "add_edge",
         "create_face",
         "translate_vertices",
-        "extrude_face"
+        "extrude_face",
+        "viewport_vertex_selection",
+        "viewport_edge_selection",
+        "viewport_face_selection",
+        "construction_plane_vertex_placement",
+        "construction_plane_grid",
+        "version_checked_mesh_save",
+        "previous_generation_recovery"
       ]
     },
     {

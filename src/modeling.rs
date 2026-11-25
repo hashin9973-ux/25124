@@ -3,6 +3,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::Path,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use anyhow::{Context, Result, ensure};
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 const DOCUMENT_SCHEMA_VERSION: u32 = 1;
 const GEOMETRY_EPSILON: f64 = 1.0e-12;
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -96,7 +98,9 @@ impl MeshDocument {
                 vertex.id
             );
             ensure!(
-                vertex.position_m.iter().all(|value| value.is_finite()),
+                vertex.position_m
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= f32::MAX as f64),
                 "vertex '{}' contains a non-finite position",
                 vertex.id
             );
@@ -184,6 +188,7 @@ impl MeshDocument {
             }
 
             self.face_normal(face)?;
+            self.triangulate_face(face)?;
             if let Some(material) = &face.material {
                 ensure!(
                     !material.trim().is_empty(),
@@ -216,7 +221,9 @@ impl MeshDocument {
             vertex.id
         );
         ensure!(
-            vertex.position_m.iter().all(|value| value.is_finite()),
+            vertex.position_m
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= f32::MAX as f64),
             "vertex '{}' position must contain only finite values",
             vertex.id
         );
@@ -417,14 +424,17 @@ impl MeshDocument {
             "face '{}' must contain at least three vertices",
             face.id
         );
+        let origin = self.vertex_position(&face.vertices[0])?;
         let mut normal = [0.0_f64; 3];
         for index in 0..face.vertices.len() {
             let current = self.vertex_position(&face.vertices[index])?;
             let next = self.vertex_position(&face.vertices[(index + 1) % face.vertices.len()])?;
+            let current = subtract_position(current, origin);
+            let next = subtract_position(next, origin);
 
-            normal[0] += (current[1] - next[1]) * (current[2] + next[2]);
-            normal[1] += (current[2] - next[2]) * (current[0] + next[0]);
-            normal[2] += (current[0] - next[0]) * (current[1] + next[1]);
+            normal[0] += current[1] * next[2] - current[2] * next[1];
+            normal[1] += current[2] * next[0] - current[0] * next[2];
+            normal[2] += current[0] * next[1] - current[1] * next[0];
         }
 
         let length = normal.iter().map(|value| value * value).sum::<f64>().sqrt();
@@ -439,6 +449,171 @@ impl MeshDocument {
         Ok(normal)
     }
 
+    /// Triangulates a planar, simple polygon using ear clipping.
+    ///
+    /// Returned indices address the face's ordered corner loop, not the global
+    /// vertex array. Concave polygons are supported; self-intersecting and
+    /// materially non-planar polygons are rejected instead of being fan-filled.
+    pub fn triangulate_face(&self, face: &MeshFace) -> Result<Vec<[usize; 3]>> {
+        ensure!(
+            face.vertices.len() >= 3,
+            "face '{}' must contain at least three vertices",
+            face.id
+        );
+
+        let positions = face
+            .vertices
+            .iter()
+            .map(|id| self.vertex_position(id))
+            .collect::<Result<Vec<_>>>()?;
+        let normal = self.face_normal(face)?;
+        let origin = positions[0];
+        let scale = positions
+            .iter()
+            .fold([0.0_f64; 3], |mut extent, position| {
+                for axis in 0..3 {
+                    extent[axis] = extent[axis].max((position[axis] - origin[axis]).abs());
+                }
+                extent
+            })
+            .into_iter()
+            .fold(0.0_f64, f64::max)
+            .max(f64::MIN_POSITIVE);
+        let planarity_tolerance = (scale * 1.0e-8).max(1.0e-12);
+
+        for position in &positions {
+            let offset = [
+                position[0] - origin[0],
+                position[1] - origin[1],
+                position[2] - origin[2],
+            ];
+            let distance = offset[0] * normal[0]
+                + offset[1] * normal[1]
+                + offset[2] * normal[2];
+            ensure!(
+                distance.abs() <= planarity_tolerance,
+                "face '{}' is not planar within tolerance",
+                face.id
+            );
+        }
+
+        let dominant_axis = if normal[0].abs() >= normal[1].abs()
+            && normal[0].abs() >= normal[2].abs()
+        {
+            0
+        } else if normal[1].abs() >= normal[2].abs() {
+            1
+        } else {
+            2
+        };
+        let projected = positions
+            .iter()
+            .map(|position| {
+                let relative = subtract_position(*position, origin);
+                match dominant_axis {
+                    0 => [relative[1], relative[2]],
+                    1 => [relative[0], relative[2]],
+                    _ => [relative[0], relative[1]],
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let twice_area = projected
+            .iter()
+            .enumerate()
+            .map(|(index, point)| {
+                let next = projected[(index + 1) % projected.len()];
+                point[0] * next[1] - next[0] * point[1]
+            })
+            .sum::<f64>();
+        let area_epsilon = (GEOMETRY_EPSILON * scale * scale).max(1.0e-24);
+        ensure!(
+            twice_area.is_finite() && twice_area.abs() > area_epsilon,
+            "face '{}' has zero projected area",
+            face.id
+        );
+
+        let count = projected.len();
+        for first in 0..count {
+            let first_next = (first + 1) % count;
+            for second in (first + 1)..count {
+                let second_next = (second + 1) % count;
+                if first == second
+                    || first_next == second
+                    || second_next == first
+                {
+                    continue;
+                }
+                ensure!(
+                    !segments_intersect_2d(
+                        projected[first],
+                        projected[first_next],
+                        projected[second],
+                        projected[second_next],
+                        area_epsilon,
+                        (GEOMETRY_EPSILON * scale).max(1.0e-12),
+                    ),
+                    "face '{}' has a self-intersecting boundary",
+                    face.id
+                );
+            }
+        }
+
+        let winding = twice_area.signum();
+        let mut remaining = (0..count).collect::<Vec<_>>();
+        let mut triangles = Vec::with_capacity(count - 2);
+
+        while remaining.len() > 3 {
+            let mut ear = None;
+            for cursor in 0..remaining.len() {
+                let previous = remaining[(cursor + remaining.len() - 1) % remaining.len()];
+                let current = remaining[cursor];
+                let next = remaining[(cursor + 1) % remaining.len()];
+                let a = projected[previous];
+                let b = projected[current];
+                let c = projected[next];
+
+                if winding * cross_2d(a, b, c) <= area_epsilon {
+                    continue;
+                }
+
+                let contains_other_vertex = remaining.iter().copied().any(|candidate| {
+                    candidate != previous
+                        && candidate != current
+                        && candidate != next
+                        && point_in_triangle_2d(projected[candidate], a, b, c, winding, area_epsilon)
+                });
+                if !contains_other_vertex {
+                    ear = Some((cursor, [previous, current, next]));
+                    break;
+                }
+            }
+
+            let Some((cursor, triangle)) = ear else {
+                anyhow::bail!(
+                    "face '{}' could not be triangulated without degeneracy",
+                    face.id
+                );
+            };
+            triangles.push(triangle);
+            remaining.remove(cursor);
+        }
+
+        ensure!(
+            winding
+                * cross_2d(
+                    projected[remaining[0]],
+                    projected[remaining[1]],
+                    projected[remaining[2]],
+                )
+                > area_epsilon,
+            "face '{}' ends with a degenerate triangle",
+            face.id
+        );
+        triangles.push([remaining[0], remaining[1], remaining[2]]);
+        Ok(triangles)
+    }
+
     fn vertex_position(&self, id: &str) -> Result<[f64; 3]> {
         self.vertices
             .iter()
@@ -446,6 +621,173 @@ impl MeshDocument {
             .map(|vertex| vertex.position_m)
             .with_context(|| format!("unknown vertex '{id}'"))
     }
+}
+
+/// Persists an edited mesh document while preserving the previous valid generation.
+///
+/// The file on disk must still match `expected_previous`; this prevents an
+/// editor session from silently overwriting changes made by another process.
+pub fn save_mesh_document_with_backup(
+    path: &Path,
+    expected_previous: &MeshDocument,
+    document: &MeshDocument,
+) -> Result<()> {
+    expected_previous.validate()?;
+    document.validate()?;
+    ensure!(
+        expected_previous.id == document.id,
+        "a mesh edit cannot change the document id"
+    );
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = parent
+        .canonicalize()
+        .with_context(|| format!("could not resolve mesh directory '{}'", parent.display()))?;
+    ensure!(
+        parent.is_dir(),
+        "mesh output path '{}' is not a directory",
+        parent.display()
+    );
+    let file_name = path
+        .file_name()
+        .context("mesh document path must include a file name")?;
+    let expected_name = format!("{}.mesh.json", document.id);
+    ensure!(
+        file_name.to_string_lossy().as_ref() == expected_name.as_str(),
+        "mesh document path must be named '{expected_name}'"
+    );
+
+    let target = parent.join(file_name);
+    let verify_current = || -> Result<()> {
+        let metadata = fs::symlink_metadata(&target)
+            .with_context(|| format!("mesh document '{}' no longer exists", target.display()))?;
+        ensure!(
+            metadata.file_type().is_file(),
+            "mesh document target '{}' must be a regular file",
+            target.display()
+        );
+        let current_bytes = fs::read(&target)
+            .with_context(|| format!("could not read current mesh '{}'", target.display()))?;
+        let current: MeshDocument = serde_json::from_slice(&current_bytes)
+            .with_context(|| format!("current mesh '{}' is not valid JSON", target.display()))?;
+        current.validate()?;
+        ensure!(
+            current == *expected_previous,
+            "mesh '{}' changed on disk since it was loaded; reload before editing",
+            document.id
+        );
+        Ok(())
+    };
+    verify_current()?;
+
+    let backup = parent.join(format!("{}.prev", file_name.to_string_lossy()));
+    let contents = serde_json::to_vec_pretty(document)
+        .context("could not serialize mesh document")?;
+    let (temporary, mut file) = loop {
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            sequence
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("could not create staged mesh file '{}'", temporary.display())
+                });
+            }
+        }
+    };
+
+    let write_result = (|| -> Result<()> {
+        file.write_all(&contents)
+            .with_context(|| format!("could not write staged mesh '{}'", temporary.display()))?;
+        file.sync_all()
+            .with_context(|| format!("could not flush staged mesh '{}'", temporary.display()))?;
+        Ok(())
+    })();
+    drop(file);
+
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+
+    let staged_result = (|| -> Result<()> {
+        let staged_contents = fs::read(&temporary)
+            .with_context(|| format!("could not verify staged mesh '{}'", temporary.display()))?;
+        let staged_document: MeshDocument = serde_json::from_slice(&staged_contents)
+            .with_context(|| format!("invalid staged mesh '{}'", temporary.display()))?;
+        staged_document.validate()?;
+        ensure!(
+            staged_document == *document,
+            "staged mesh '{}' does not match the requested document",
+            temporary.display()
+        );
+
+        // Recheck immediately before moving the previous generation. This is
+        // optimistic concurrency protection, not an OS-level file lock.
+        verify_current()?;
+
+        match fs::symlink_metadata(&backup) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.file_type().is_file(),
+                    "mesh recovery file '{}' must be a regular file",
+                    backup.display()
+                );
+                fs::remove_file(&backup).with_context(|| {
+                    format!("could not replace previous mesh recovery file '{}'", backup.display())
+                })?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("could not inspect previous mesh recovery file"),
+        }
+
+        fs::rename(&target, &backup).with_context(|| {
+            format!(
+                "could not preserve current mesh '{}' as '{}'",
+                target.display(),
+                backup.display()
+            )
+        })?;
+
+        if let Err(commit_error) = fs::rename(&temporary, &target) {
+            let restore_result = if !target.exists() {
+                fs::rename(&backup, &target)
+            } else {
+                Ok(())
+            };
+            if let Err(restore_error) = restore_result {
+                anyhow::bail!(
+                    "could not commit mesh '{}' ({commit_error}); restoring previous file '{}' also failed ({restore_error})",
+                    target.display(),
+                    backup.display()
+                );
+            }
+            return Err(commit_error).with_context(|| {
+                format!("could not commit staged mesh '{}'", target.display())
+            });
+        }
+
+        #[cfg(unix)]
+        let _directory_sync_result =
+            fs::File::open(&parent).and_then(|directory| directory.sync_all());
+
+        Ok(())
+    })();
+
+    if staged_result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    staged_result
 }
 
 pub fn discover_mesh_documents(directory: &Path) -> Result<Vec<MeshDocument>> {
@@ -467,6 +809,69 @@ pub fn discover_mesh_documents(directory: &Path) -> Result<Vec<MeshDocument>> {
         })?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
+
+    // A mesh edit preserves the prior generation as *.mesh.json.prev before
+    // replacing the primary file. Restore it if the process stopped in that gap.
+    let recovery_paths = paths
+        .iter()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_str()?;
+            let primary_name = name.strip_suffix(".prev")?;
+            primary_name.ends_with(".mesh.json").then(|| {
+                (path.clone(), canonical_directory.join(primary_name))
+            })
+        })
+        .collect::<Vec<_>>();
+    for (backup_path, primary_path) in recovery_paths {
+        match fs::symlink_metadata(&primary_path) {
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("could not inspect mesh recovery target '{}'", primary_path.display())
+                });
+            }
+        }
+
+        let backup_metadata = fs::symlink_metadata(&backup_path)?;
+        ensure!(
+            backup_metadata.file_type().is_file(),
+            "mesh recovery file '{}' must be a regular file",
+            backup_path.display()
+        );
+        let canonical_backup = backup_path
+            .canonicalize()
+            .with_context(|| format!("could not resolve mesh recovery file '{}'", backup_path.display()))?;
+        ensure!(
+            canonical_backup.starts_with(&canonical_directory),
+            "mesh recovery file '{}' resolves outside its world-owned directory",
+            backup_path.display()
+        );
+        let contents = fs::read(&canonical_backup)?;
+        let recovered: MeshDocument = serde_json::from_slice(&contents)
+            .with_context(|| format!("invalid mesh recovery file '{}'", backup_path.display()))?;
+        recovered.validate().with_context(|| {
+            format!("mesh recovery file '{}' failed validation", backup_path.display())
+        })?;
+        let expected_name = format!("{}.mesh.json", recovered.id);
+        ensure!(
+            primary_path.file_name().is_some_and(|name| {
+                name.to_string_lossy().as_ref() == expected_name.as_str()
+            }),
+            "mesh recovery file '{}' filename does not match id '{}'",
+            backup_path.display(),
+            recovered.id
+        );
+        fs::rename(&canonical_backup, &primary_path).with_context(|| {
+            format!(
+                "could not restore mesh recovery file '{}' to '{}'",
+                backup_path.display(),
+                primary_path.display()
+            )
+        })?;
+        paths.push(primary_path);
+    }
+    paths.retain(|path| path.exists());
     paths.sort();
 
     let mut documents = Vec::new();
@@ -580,6 +985,64 @@ pub fn create_empty_mesh_document(output_directory: &Path) -> Result<MeshDocumen
 
         return Ok(document);
     }
+}
+
+fn cross_2d(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn subtract_position(first: [f64; 3], second: [f64; 3]) -> [f64; 3] {
+    [
+        first[0] - second[0],
+        first[1] - second[1],
+        first[2] - second[2],
+    ]
+}
+
+fn point_in_triangle_2d(
+    point: [f64; 2],
+    a: [f64; 2],
+    b: [f64; 2],
+    c: [f64; 2],
+    winding: f64,
+    epsilon: f64,
+) -> bool {
+    winding * cross_2d(a, b, point) >= -epsilon
+        && winding * cross_2d(b, c, point) >= -epsilon
+        && winding * cross_2d(c, a, point) >= -epsilon
+}
+
+fn segments_intersect_2d(
+    a: [f64; 2],
+    b: [f64; 2],
+    c: [f64; 2],
+    d: [f64; 2],
+    area_epsilon: f64,
+    linear_epsilon: f64,
+) -> bool {
+    let ab_c = cross_2d(a, b, c);
+    let ab_d = cross_2d(a, b, d);
+    let cd_a = cross_2d(c, d, a);
+    let cd_b = cross_2d(c, d, b);
+
+    if ab_c * ab_d < -area_epsilon * area_epsilon
+        && cd_a * cd_b < -area_epsilon * area_epsilon
+    {
+        return true;
+    }
+
+    let on_segment = |point: [f64; 2], start: [f64; 2], end: [f64; 2], cross: f64| {
+        cross.abs() <= area_epsilon
+            && point[0] >= start[0].min(end[0]) - linear_epsilon
+            && point[0] <= start[0].max(end[0]) + linear_epsilon
+            && point[1] >= start[1].min(end[1]) - linear_epsilon
+            && point[1] <= start[1].max(end[1]) + linear_epsilon
+    };
+
+    on_segment(c, a, b, ab_c)
+        || on_segment(d, a, b, ab_d)
+        || on_segment(a, c, d, cd_a)
+        || on_segment(b, c, d, cd_b)
 }
 
 fn canonical_edge(first: &str, second: &str) -> (String, String) {
@@ -720,6 +1183,150 @@ mod tests {
         let after_first = mesh.clone();
         assert!(mesh.extrude_face("f0", 1.0, "existing").is_err());
         assert_eq!(mesh, after_first);
+    }
+
+    #[test]
+    fn concave_faces_triangulate_without_covering_the_concavity() {
+        let mut mesh = empty_document();
+        let polygon = [
+            ("v0", [0.0, 0.0, 0.0]),
+            ("v1", [2.0, 0.0, 0.0]),
+            ("v2", [2.0, 2.0, 0.0]),
+            ("v3", [1.0, 1.0, 0.0]),
+            ("v4", [0.0, 2.0, 0.0]),
+        ];
+        for (id, position_m) in polygon {
+            mesh.add_vertex(MeshVertex {
+                id: id.to_owned(),
+                position_m,
+            })
+            .unwrap();
+        }
+        for index in 0..polygon.len() {
+            let next = (index + 1) % polygon.len();
+            mesh.add_edge(MeshEdge {
+                id: format!("e{index}"),
+                vertices: [
+                    polygon[index].0.to_owned(),
+                    polygon[next].0.to_owned(),
+                ],
+            })
+            .unwrap();
+        }
+        let face = MeshFace {
+            id: "concave".to_owned(),
+            vertices: polygon.iter().map(|(id, _)| (*id).to_owned()).collect(),
+            material: None,
+            uvs: None,
+        };
+        mesh.add_face(face.clone()).unwrap();
+
+        let triangles = mesh.triangulate_face(&face).unwrap();
+        assert_eq!(triangles.len(), 3);
+        let triangulated_area = triangles
+            .iter()
+            .map(|triangle| {
+                let a = mesh.vertices[triangle[0]].position_m;
+                let b = mesh.vertices[triangle[1]].position_m;
+                let c = mesh.vertices[triangle[2]].position_m;
+                ((b[0] - a[0]) * (c[1] - a[1])
+                    - (b[1] - a[1]) * (c[0] - a[0]))
+                    .abs()
+                    * 0.5
+            })
+            .sum::<f64>();
+        assert!((triangulated_area - 3.0).abs() < 1.0e-9);
+    }
+
+    #[test]
+    fn non_planar_faces_are_rejected_for_surface_triangulation() {
+        let mut mesh = empty_document();
+        for (id, position_m) in [
+            ("v0", [0.0, 0.0, 0.0]),
+            ("v1", [1.0, 0.0, 0.0]),
+            ("v2", [1.0, 1.0, 0.2]),
+            ("v3", [0.0, 1.0, 0.0]),
+        ] {
+            mesh.add_vertex(MeshVertex {
+                id: id.to_owned(),
+                position_m,
+            })
+            .unwrap();
+        }
+        for (index, vertices) in [
+            ["v0", "v1"],
+            ["v1", "v2"],
+            ["v2", "v3"],
+            ["v3", "v0"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            mesh.add_edge(MeshEdge {
+                id: format!("e{index}"),
+                vertices: vertices.map(str::to_owned),
+            })
+            .unwrap();
+        }
+        let face = MeshFace {
+            id: "non_planar".to_owned(),
+            vertices: ["v0", "v1", "v2", "v3"]
+                .map(str::to_owned)
+                .into(),
+            material: None,
+            uvs: None,
+        };
+        assert!(mesh.add_face(face).is_err());
+    }
+
+    #[test]
+    fn mesh_document_updates_keep_a_previous_valid_generation() {
+        let directory = temporary_directory("mesh-atomic-save");
+        fs::create_dir_all(&directory).unwrap();
+        let original = super::create_empty_mesh_document(&directory).unwrap();
+        let path = directory.join(format!("{}.mesh.json", original.id));
+        let mut updated = original.clone();
+        updated
+            .add_vertex(MeshVertex {
+                id: "vertex_001".to_owned(),
+                position_m: [1.0, 2.0, 3.0],
+            })
+            .unwrap();
+
+        super::save_mesh_document_with_backup(&path, &original, &updated).unwrap();
+
+        let current: MeshDocument =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let previous: MeshDocument = serde_json::from_slice(
+            &fs::read(directory.join(format!("{}.mesh.json.prev", original.id))).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(current, updated);
+        assert_eq!(previous, original);
+        assert_eq!(discover_mesh_documents(&directory).unwrap(), vec![updated.clone()]);
+        assert!(
+            super::save_mesh_document_with_backup(&path, &original, &updated).is_err(),
+            "a stale editor snapshot must not overwrite the newer document"
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn missing_mesh_primary_is_restored_from_previous_generation() {
+        let directory = temporary_directory("mesh-recovery");
+        fs::create_dir_all(&directory).unwrap();
+        let document = create_empty_mesh_document(&directory).unwrap();
+        let primary = directory.join(format!("{}.mesh.json", document.id));
+        let backup = directory.join(format!("{}.mesh.json.prev", document.id));
+        fs::rename(&primary, &backup).unwrap();
+
+        assert_eq!(discover_mesh_documents(&directory).unwrap(), vec![document]);
+        assert!(primary.is_file());
+        assert!(!backup.exists());
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    EditorScreen, MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE,
-    WorldBrowserPage,
+    EditorScreen, MenuAction, MenuSceneDirty, MeshViewportState, PendingMenuCommand,
+    WORLD_PAGE_SIZE, WorldBrowserPage,
 };
 use crate::{
     config::{BodyType, RuntimeConfig},
@@ -129,6 +129,10 @@ pub struct CharacterStudioWorkspace {
     pub actions_index: String,
     pub tool_catalog_path: String,
     pub model_output_directory: String,
+    pub construction_plane_origin_m: [f64; 3],
+    pub construction_plane_normal_world: [f64; 3],
+    pub construction_plane_grid_spacing_m: f64,
+    pub construction_plane_grid_extent_m: f64,
     pub output_directories: Vec<String>,
     pub species: Vec<Value>,
     pub mesh_documents: Vec<MeshDocument>,
@@ -151,7 +155,22 @@ struct WorkspaceFile {
     actions_index: String,
     tool_catalog: String,
     model_output_directory: String,
+    modeling_settings: String,
     output_directories: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ModelingSettingsFile {
+    schema_version: u32,
+    construction_plane: ConstructionPlaneFile,
+}
+
+#[derive(Deserialize)]
+struct ConstructionPlaneFile {
+    origin_m: [f64; 3],
+    normal_world: [f64; 3],
+    grid_spacing_m: f64,
+    grid_extent_m: f64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -215,6 +234,59 @@ impl CharacterStudioWorkspace {
         ensure!(
             workspace.preview_origin_m.iter().all(|value| value.is_finite()),
             "character studio preview_origin_m must contain finite values"
+        );
+
+        let modeling_settings_path = safe_project_path(data_dir, &workspace.modeling_settings)?;
+        let modeling_settings: ModelingSettingsFile = read_json(&modeling_settings_path)?;
+        ensure!(
+            modeling_settings.schema_version == 1,
+            "unsupported modeling settings schema in '{}'",
+            modeling_settings_path.display()
+        );
+        ensure!(
+            modeling_settings
+                .construction_plane
+                .origin_m
+                .iter()
+                .all(|value| value.is_finite() && value.abs() <= f32::MAX as f64)
+                && modeling_settings
+                    .construction_plane
+                    .normal_world
+                    .iter()
+                    .all(|value| value.is_finite()),
+            "construction plane values must be finite"
+        );
+        let normal_length = modeling_settings
+            .construction_plane
+            .normal_world
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt();
+        ensure!(
+            normal_length.is_finite() && normal_length > 1.0e-12,
+            "construction plane normal must have non-zero finite length"
+        );
+        let construction_plane_normal_world = modeling_settings
+            .construction_plane
+            .normal_world
+            .map(|value| value / normal_length);
+        let construction_plane_grid_spacing_m =
+            modeling_settings.construction_plane.grid_spacing_m;
+        let construction_plane_grid_extent_m =
+            modeling_settings.construction_plane.grid_extent_m;
+        ensure!(
+            construction_plane_grid_spacing_m.is_finite()
+                && construction_plane_grid_spacing_m > 0.0
+                && construction_plane_grid_extent_m.is_finite()
+                && construction_plane_grid_extent_m > 0.0
+                && construction_plane_grid_spacing_m <= f32::MAX as f64
+                && construction_plane_grid_extent_m <= f32::MAX as f64,
+            "construction plane grid spacing and extent must be finite and positive"
+        );
+        ensure!(
+            construction_plane_grid_extent_m / construction_plane_grid_spacing_m <= 100.0,
+            "construction plane grid may not exceed 100 intervals per side"
         );
 
         let rigging_settings_path = safe_project_path(data_dir, &workspace.rigging_settings)?;
@@ -445,6 +517,10 @@ impl CharacterStudioWorkspace {
             actions_index: workspace.actions_index,
             tool_catalog_path: workspace.tool_catalog,
             model_output_directory: workspace.model_output_directory,
+            construction_plane_origin_m: modeling_settings.construction_plane.origin_m,
+            construction_plane_normal_world,
+            construction_plane_grid_spacing_m,
+            construction_plane_grid_extent_m,
             output_directories: workspace.output_directories,
             species: species_documents,
             mesh_documents,
@@ -1431,6 +1507,7 @@ pub(super) fn process_menu_command(
     mut gravity: ResMut<Gravity>,
     mut active_world: ResMut<ActiveWorld>,
     mut studio_workspace: ResMut<CharacterStudioWorkspace>,
+    mut mesh_viewport: ResMut<MeshViewportState>,
     mut page: ResMut<WorldBrowserPage>,
     mut scene_dirty: ResMut<MenuSceneDirty>,
     mut next_screen: ResMut<NextState<EditorScreen>>,
@@ -1497,6 +1574,8 @@ pub(super) fn process_menu_command(
                 .find(|world| world.id == active_id && world.kind == WorldKind::CharacterStudio)
                 .context("active Character Studio world is missing from the catalog")?;
             let mesh_id = create_mesh_for_world(&root.0, studio)?;
+            mesh_viewport.active_document_id = Some(mesh_id.clone());
+            mesh_viewport.selection.clear();
             let data_dir = safe_project_path(&root.0, &studio.data)?;
             let outputs_dir = safe_project_path(&root.0, &studio.outputs)?;
             *studio_workspace =
@@ -1797,6 +1876,10 @@ mod tests {
         assert!(workspace.action_sets.is_empty());
         assert!(workspace.mesh_documents.is_empty());
         assert_eq!(workspace.model_output_directory, "models");
+        assert_eq!(workspace.construction_plane_origin_m, [0.0, 0.0, 0.0]);
+        assert_eq!(workspace.construction_plane_normal_world, [0.0, 1.0, 0.0]);
+        assert_eq!(workspace.construction_plane_grid_spacing_m, 0.25);
+        assert_eq!(workspace.construction_plane_grid_extent_m, 5.0);
         assert!(
             workspace
                 .tool_catalog
