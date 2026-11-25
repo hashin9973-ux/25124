@@ -1162,6 +1162,7 @@ fn atomic_write_json(
                 .with_context(|| format!("could not read current JSON '{}'", path.display()))?;
             let (staged_backup_path, mut backup_file) =
                 create_catalog_temp_file(path, "backup")?;
+            backup_temporary_path = Some(staged_backup_path.clone());
             backup_file
                 .write_all(&previous_contents)
                 .with_context(|| {
@@ -1171,8 +1172,6 @@ fn atomic_write_json(
                 format!("could not flush previous JSON generation for '{}'", path.display())
             })?;
             drop(backup_file);
-            backup_temporary_path = Some(staged_backup_path.clone());
-
             let previous_path = path.with_extension("json.prev");
             if previous_path.exists() {
                 fs::remove_file(&previous_path).with_context(|| {
