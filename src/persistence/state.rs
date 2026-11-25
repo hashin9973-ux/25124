@@ -106,9 +106,9 @@ fn load_valid_state(path: &Path, expected_world_id: &str) -> Result<Option<World
 
     for (id, body) in &mut state.bodies {
         ensure!(
-                !id.trim().is_empty(),
-                "save contains an empty persistent object id"
-            );
+            !id.trim().is_empty(),
+            "save contains an empty persistent object id"
+        );
         ensure!(
             body.translation_m
                 .iter()
