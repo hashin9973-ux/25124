@@ -38,17 +38,28 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.3
 
+      - name: Resolve and lock Rust dependencies
+        run: cargo generate-lockfile
+
+      - name: Export generated Cargo.lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Type-check all targets
-        run: cargo check --all-targets
+        run: cargo check --locked --all-targets
 
       - name: Run tests
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets
 
       - name: Run Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   windows-portable-package:
     name: Build and verify Windows portable package
