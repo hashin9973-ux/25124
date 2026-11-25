@@ -1290,20 +1290,34 @@ fn create_empty_world(
     project_root: &Path,
     catalog: &mut WorldCatalog,
 ) -> Result<WorldCatalogEntry> {
+    let worlds_dir = project_root.join("worlds");
+    fs::create_dir_all(&worlds_dir)
+        .with_context(|| format!("could not create worlds directory '{}'", worlds_dir.display()))?;
+
     let mut index = 1_u32;
     let id = loop {
         let candidate = format!("world_{index:03}");
-        if !catalog.worlds.iter().any(|world| world.id == candidate) {
+        let directory_exists = worlds_dir.join(&candidate).exists();
+        let catalog_contains_id = catalog.worlds.iter().any(|world| world.id == candidate);
+        if !catalog_contains_id && !directory_exists {
             break candidate;
         }
-        index = index.saturating_add(1);
+        index = index
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("world id sequence is exhausted"))?;
     };
 
     let world_name = format!("New World {index}");
-    let world_root = project_root.join("worlds").join(&id);
+    let world_root = worlds_dir.join(&id);
     let data_dir = world_root.join("data");
     let assets_dir = world_root.join("assets");
     let outputs_dir = world_root.join("outputs");
+    fs::create_dir(&world_root).with_context(|| {
+        format!(
+            "could not reserve new world directory '{}' without overwriting existing content",
+            world_root.display()
+        )
+    })?;
 
     for directory in [
         assets_dir.join("models"),
@@ -1503,6 +1517,45 @@ mod tests {
             .is_err(),
             "action validator must reject surface tags not defined by the world"
         );
+    }
+
+    #[test]
+    fn world_creation_does_not_reuse_unregistered_existing_directories() {
+        use std::fs;
+
+        use super::{WorldCatalog, create_empty_world};
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "physics-sandbox-world-create-{}-{timestamp}",
+            std::process::id()
+        ));
+        let orphan = root.join("worlds/world_001");
+        fs::create_dir_all(&orphan).expect("orphan world directory should be created");
+        fs::write(orphan.join("keep.txt"), b"preserve me")
+            .expect("orphan sentinel should be written");
+
+        let source_data = root.join("data");
+        fs::create_dir_all(&source_data).expect("bootstrap data directory should be created");
+        for file in ["engine.json", "materials.json", "components.json"] {
+            fs::write(source_data.join(file), b"{}")
+                .expect("bootstrap configuration fixture should be written");
+        }
+
+        let mut catalog = WorldCatalog::default();
+        let created = create_empty_world(&root, &mut catalog)
+            .expect("world should be allocated after the orphan directory");
+        let sentinel = fs::read(orphan.join("keep.txt"))
+            .expect("orphan sentinel should remain readable");
+
+        assert_eq!(created.id, "world_002");
+        assert_eq!(sentinel.as_slice(), b"preserve me");
+        assert!(catalog.worlds.iter().any(|world| world.id == "world_002"));
+
+        fs::remove_dir_all(root).expect("temporary world project should be cleaned up");
     }
 
     #[test]
