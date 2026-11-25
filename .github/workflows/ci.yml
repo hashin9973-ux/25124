@@ -73,3 +73,23 @@ jobs:
               throw "Portable package is missing: $path"
             }
           }
+
+      - name: Archive portable Windows package
+        shell: pwsh
+        run: |
+          $archive = "./dist/physics_sandbox-windows-x86_64.zip"
+          if (Test-Path $archive) {
+            Remove-Item $archive -Force
+          }
+          Compress-Archive -Path "./dist/physics_sandbox" -DestinationPath $archive -CompressionLevel Optimal
+          if (-not (Test-Path $archive -PathType Leaf)) {
+            throw "Portable package archive was not created: $archive"
+          }
+
+      - name: Upload portable Windows build
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: physics_sandbox-windows-x86_64
+          path: dist/physics_sandbox-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 30
