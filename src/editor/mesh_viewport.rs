@@ -461,7 +461,27 @@ fn ray_segment_distance(
     let denominator = a * c - b * b;
 
     let (ray_distance, segment_t) = if denominator.abs() <= PICK_EPSILON {
-        (0.0_f32, (e / c).clamp(0.0, 1.0))
+        // The lines are parallel or nearly parallel. Project both segment
+        // endpoints onto the forward ray and clamp the closest pair there.
+        let start_projection = (start - origin).dot(direction);
+        let end_projection = (end - origin).dot(direction);
+        if start_projection <= 0.0 && end_projection <= 0.0 {
+            if start_projection >= end_projection {
+                (0.0, 0.0)
+            } else {
+                (0.0, 1.0)
+            }
+        } else if start_projection <= 0.0 && end_projection >= 0.0 {
+            let projection_span = end_projection - start_projection;
+            (0.0, (-start_projection / projection_span).clamp(0.0, 1.0))
+        } else if end_projection <= 0.0 && start_projection >= 0.0 {
+            let projection_span = start_projection - end_projection;
+            (0.0, (start_projection / projection_span).clamp(0.0, 1.0))
+        } else if start_projection < end_projection {
+            (start_projection, 0.0)
+        } else {
+            (end_projection, 1.0)
+        }
     } else {
         let mut ray_t = (b * e - c * d) / denominator;
         let mut segment_t = (a * e - b * d) / denominator;
@@ -835,7 +855,7 @@ pub(super) fn draw_mesh_overlay(
 mod tests {
     use bevy::math::Vec3;
 
-    use super::{ray_plane_intersection, ray_triangle_distance};
+    use super::{ray_plane_intersection, ray_segment_distance, ray_triangle_distance};
 
     #[test]
     fn ray_triangle_pick_reports_nearest_forward_hit_only() {
@@ -860,6 +880,45 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn parallel_edge_pick_uses_the_nearest_forward_point() {
+        let result = ray_segment_distance(
+            Vec3::ZERO,
+            Vec3::Z,
+            Vec3::new(0.02, 0.0, 5.0),
+            Vec3::new(0.02, 0.0, 8.0),
+        )
+        .unwrap();
+        assert!((result.0 - 5.0).abs() < 1.0e-6);
+        assert!((result.1 - 0.0004).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn parallel_edge_behind_the_camera_is_not_a_forward_hit() {
+        let result = ray_segment_distance(
+            Vec3::ZERO,
+            Vec3::Z,
+            Vec3::new(0.02, 0.0, -8.0),
+            Vec3::new(0.02, 0.0, -5.0),
+        )
+        .unwrap();
+        assert_eq!(result.0, 0.0);
+        assert!((result.1 - 25.0004).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn parallel_edge_spanning_ray_origin_uses_closest_segment_point() {
+        let result = ray_segment_distance(
+            Vec3::ZERO,
+            Vec3::Z,
+            Vec3::new(0.02, 0.0, -2.0),
+            Vec3::new(0.02, 0.0, 3.0),
+        )
+        .unwrap();
+        assert_eq!(result.0, 0.0);
+        assert!((result.1 - 0.0004).abs() < 1.0e-6);
     }
 
     #[test]
