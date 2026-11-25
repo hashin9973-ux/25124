@@ -8,6 +8,10 @@ use crate::editor::EditorScreen;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct WorldInstanceEntity;
 
+/// Data-authored labels for collision and surface-geometry conditions.
+#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorldSurfaceTags(pub Vec<String>);
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {

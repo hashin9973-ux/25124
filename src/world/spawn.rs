@@ -14,7 +14,7 @@ use crate::{
     },
     editor::{ActiveWorld, CharacterStudioWorkspace, WorldKind},
     persistence::{PersistRuntimeState, PersistentObjectId, WorldStateFile},
-    world::{WorldInstanceEntity, character_preview},
+    world::{WorldInstanceEntity, WorldSurfaceTags, character_preview},
 };
 
 pub(super) fn spawn_world(
@@ -77,6 +77,7 @@ pub(super) fn spawn_world(
         let mut entity = commands.spawn((
             Name::new(instance.id.clone()),
             WorldInstanceEntity,
+            WorldSurfaceTags(definition.tags.clone()),
             PersistentObjectId(instance.id.clone()),
             rigid_body,
             collider,

@@ -24,7 +24,13 @@
         "metallic": 0.03,
         "alpha_mode": "opaque"
       },
-      "swept_ccd": null
+      "swept_ccd": null,
+      "tags": [
+        "environment",
+        "walkable",
+        "ground",
+        "world_surface"
+      ]
     },
     "studio.workbench": {
       "body_type": "static",
@@ -49,7 +55,12 @@
         "metallic": 0.04,
         "alpha_mode": "opaque"
       },
-      "swept_ccd": null
+      "swept_ccd": null,
+      "tags": [
+        "environment",
+        "work_surface",
+        "solid_surface"
+      ]
     },
     "studio.reference_pedestal": {
       "body_type": "static",
@@ -74,7 +85,12 @@
         "metallic": 0.42,
         "alpha_mode": "opaque"
       },
-      "swept_ccd": null
+      "swept_ccd": null,
+      "tags": [
+        "environment",
+        "work_surface",
+        "solid_surface"
+      ]
     },
     "species.segment_proxy": {
       "body_type": "dynamic",
@@ -96,7 +112,10 @@
         "metallic": 0,
         "alpha_mode": "opaque"
       },
-      "swept_ccd": null
+      "swept_ccd": null,
+      "tags": [
+        "species_part"
+      ]
     }
   }
 }

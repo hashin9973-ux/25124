@@ -160,6 +160,17 @@ pub fn validate_all(
             "component definition '{id}' references unknown material '{}'",
             definition.material
         );
+        let mut tag_ids = HashSet::new();
+        for tag in &definition.tags {
+            ensure!(
+                !tag.trim().is_empty(),
+                "component definition '{id}' has an empty tag"
+            );
+            ensure!(
+                tag_ids.insert(tag),
+                "component definition '{id}' has duplicate tag '{tag}'"
+            );
+        }
         validate_collider(&definition.collider, id)?;
         validate_visual(&definition.visual, id)?;
         if let Some(ccd) = &definition.swept_ccd {
@@ -370,6 +381,9 @@ mod tests {
         assert_eq!(config.world.id, "character_studio");
         assert_eq!(config.world.objects.len(), 3);
         assert!(config.components.definitions.contains_key("species.segment_proxy"));
+        let floor_tags = &config.components.definitions["studio.floor"].tags;
+        assert!(floor_tags.iter().any(|tag| tag == "walkable"));
+        assert!(floor_tags.iter().any(|tag| tag == "ground"));
     }
 
     #[test]

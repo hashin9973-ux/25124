@@ -24,7 +24,13 @@
         "metallic": 0,
         "alpha_mode": "opaque"
       },
-      "swept_ccd": null
+      "swept_ccd": null,
+      "tags": [
+        "environment",
+        "walkable",
+        "ground",
+        "world_surface"
+      ]
     },
     "primitive.steel_block": {
       "body_type": "dynamic",
@@ -53,7 +59,12 @@
         "filter": "all",
         "mode": "non_linear",
         "threshold": 0.5
-      }
+      },
+      "tags": [
+        "environment",
+        "movable",
+        "solid_surface"
+      ]
     },
     "primitive.timber_crate": {
       "body_type": "dynamic",
@@ -78,7 +89,12 @@
         "metallic": 0,
         "alpha_mode": "opaque"
       },
-      "swept_ccd": null
+      "swept_ccd": null,
+      "tags": [
+        "environment",
+        "movable",
+        "solid_surface"
+      ]
     },
     "primitive.rubber_sphere": {
       "body_type": "dynamic",
@@ -99,7 +115,12 @@
         "metallic": 0.02,
         "alpha_mode": "opaque"
       },
-      "swept_ccd": null
+      "swept_ccd": null,
+      "tags": [
+        "movable",
+        "species_like",
+        "soft_surface"
+      ]
     }
   }
 }

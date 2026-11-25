@@ -72,6 +72,9 @@ pub struct ComponentCatalog {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentDefinition {
+    /// Tags used by action conditions, contact filters, and editor queries.
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub body_type: BodyType,
     pub collider: ColliderShape,
     pub material: String,
