@@ -8,8 +8,8 @@ use bevy::prelude::*;
 
 use crate::{
     config::{
-        AlphaMode, BodyType, CcdFilterDefinition, ColliderShape, ComponentDefinition, RuntimeConfig,
-        SweepModeDefinition, VisualDefinition,
+        AlphaMode, BodyType, CcdFilterDefinition, ColliderShape, ComponentDefinition,
+        RuntimeConfig, SweepModeDefinition, VisualDefinition,
     },
     persistence::{PersistentObjectId, WorldStateFile},
 };
