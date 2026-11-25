@@ -68,6 +68,7 @@ pub struct ActiveWorld {
 #[derive(Resource, Clone, Debug, Default)]
 pub struct CharacterStudioWorkspace {
     pub schema_version: u32,
+    pub id: String,
     pub display_name: String,
     pub units: String,
     pub species_index: String,
@@ -123,7 +124,7 @@ struct ActionIndexEntry {
 }
 
 impl CharacterStudioWorkspace {
-    fn load(project_root: &Path, data_dir: &Path) -> Result<Self> {
+    fn load(project_root: &Path, data_dir: &Path, expected_id: &str) -> Result<Self> {
         let workspace_path = data_dir.join("editor/workspace.json");
         let workspace: WorkspaceFile = read_json(&workspace_path)?;
         ensure!(
@@ -132,8 +133,10 @@ impl CharacterStudioWorkspace {
             workspace.schema_version
         );
         ensure!(
-            !workspace.id.trim().is_empty(),
-            "character studio workspace id cannot be empty"
+            workspace.id == expected_id,
+            "workspace id '{}' does not match catalog world id '{}'",
+            workspace.id,
+            expected_id
         );
         ensure!(
             !workspace.display_name.trim().is_empty(),
@@ -252,6 +255,7 @@ impl CharacterStudioWorkspace {
 
         Ok(Self {
             schema_version: workspace.schema_version,
+            id: workspace.id,
             display_name: workspace.display_name,
             units: workspace.units,
             species_index: workspace.species_index,
@@ -622,7 +626,11 @@ fn open_world(
 
     if matches!(entry.kind, WorldKind::CharacterStudio) {
         *studio_workspace =
-            CharacterStudioWorkspace::load(&loaded.paths.root_dir, &loaded.paths.data_dir)?;
+            CharacterStudioWorkspace::load(
+                &loaded.paths.root_dir,
+                &loaded.paths.data_dir,
+                &entry.id,
+            )?;
         info!(
             "Loaded workspace '{}' ({}) with species index '{}', action index '{}', and tool catalog '{}'",
             studio_workspace.display_name,
@@ -795,6 +803,7 @@ mod tests {
         let workspace = CharacterStudioWorkspace::load(root, &data_dir)
             .expect("species, rig, and action references should resolve");
 
+        assert_eq!(workspace.id, "character_studio");
         assert_eq!(workspace.display_name, "Character Studio");
         assert_eq!(workspace.species.len(), 1);
         assert_eq!(workspace.action_sets.len(), 1);

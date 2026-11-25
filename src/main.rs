@@ -40,7 +40,7 @@ fn run() -> Result<()> {
             file_path: asset_root,
             ..default()
         }))
-        .add_plugins((EnginePlugin, EditorPlugin))
+        .add_plugins((EditorPlugin, EnginePlugin))
         .run();
 
     Ok(())
