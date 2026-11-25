@@ -1542,21 +1542,7 @@ fn create_empty_world(
     Ok(entry)
 }
 
-fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let temp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(value)?;
-    fs::write(&temp, bytes)
-        .with_context(|| format!("could not write temporary JSON '{}'", temp.display()))?;
-    if path.exists() {
-        fs::remove_file(path)
-            .with_context(|| format!("could not replace JSON '{}'", path.display()))?;
-    }
-    fs::rename(&temp, path)
-        .with_context(|| format!("could not commit JSON '{}'", path.display()))?;
-    Ok(())
-}
+
 
 
 #[cfg(test)]
