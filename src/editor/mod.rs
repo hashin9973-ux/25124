@@ -104,10 +104,6 @@ impl Plugin for EditorPlugin {
                 )
                     .chain()
                     .run_if(in_state(EditorScreen::InWorld)),
-            )
-            .add_systems(
-                OnExit(EditorScreen::InWorld),
-                studio::despawn_studio_callouts,
             );
 
         if app.world().contains_resource::<WorldStateFile>() {
