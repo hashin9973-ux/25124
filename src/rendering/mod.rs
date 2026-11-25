@@ -19,6 +19,12 @@ fn setup_key_light(mut commands: Commands, config: Res<RuntimeConfig>) {
     commands.spawn((
         ProjectKeyLight,
         DirectionalLight {
+            color: Color::srgba(
+                config.engine.rendering.key_light_color_srgba[0],
+                config.engine.rendering.key_light_color_srgba[1],
+                config.engine.rendering.key_light_color_srgba[2],
+                config.engine.rendering.key_light_color_srgba[3],
+            ),
             illuminance: config.engine.rendering.key_light_illuminance_lux,
             shadow_maps_enabled: config.engine.rendering.shadows_enabled,
             ..default()
@@ -49,6 +55,12 @@ fn sync_key_light(
     );
 
     for (mut light, mut transform) in &mut lights {
+        light.color = Color::srgba(
+            config.engine.rendering.key_light_color_srgba[0],
+            config.engine.rendering.key_light_color_srgba[1],
+            config.engine.rendering.key_light_color_srgba[2],
+            config.engine.rendering.key_light_color_srgba[3],
+        );
         light.illuminance = config.engine.rendering.key_light_illuminance_lux;
         light.shadow_maps_enabled = config.engine.rendering.shadows_enabled;
         transform.rotation = transform_rotation;

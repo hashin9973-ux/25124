@@ -672,6 +672,17 @@ fn read_catalog(path: &Path) -> Result<WorldCatalog> {
 }
 
 fn validate_relative_path(path: &str) -> Result<()> {
+    ensure!(!path.trim().is_empty(), "catalog paths cannot be empty");
+    ensure!(
+        !path.starts_with('/') && !path.contains('\\') && !path.contains(':'),
+        "catalog paths must use portable relative paths"
+    );
+    ensure!(
+        path.split('/')
+            .all(|component| !component.is_empty() && component != "." && component != ".."),
+        "catalog paths cannot contain empty, current-directory, or parent-directory components"
+    );
+
     let candidate = Path::new(path);
     ensure!(!candidate.is_absolute(), "catalog paths must be relative");
     ensure!(
@@ -680,13 +691,25 @@ fn validate_relative_path(path: &str) -> Result<()> {
             .all(|component| matches!(component, Component::Normal(_))),
         "catalog paths cannot contain root, parent, or current-directory components"
     );
-    ensure!(!path.trim().is_empty(), "catalog paths cannot be empty");
     Ok(())
 }
 
 fn safe_project_path(root: &Path, relative: &str) -> Result<PathBuf> {
     validate_relative_path(relative)?;
-    Ok(root.join(relative))
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("could not resolve project root '{}'", root.display()))?;
+    let candidate = canonical_root.join(relative);
+    let canonical_candidate = candidate
+        .canonicalize()
+        .with_context(|| format!("could not resolve project path '{}'", candidate.display()))?;
+    ensure!(
+        canonical_candidate.starts_with(&canonical_root),
+        "project path '{}' resolves outside project root '{}'",
+        candidate.display(),
+        canonical_root.display()
+    );
+    Ok(canonical_candidate)
 }
 
 pub(super) fn process_menu_command(
@@ -979,7 +1002,7 @@ mod tests {
     fn checked_in_character_studio_data_cross_references_load() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let data_dir = root.join("worlds/character_studio/data");
-        let workspace = CharacterStudioWorkspace::load(root, &data_dir)
+        let workspace = CharacterStudioWorkspace::load(root, &data_dir, "character_studio")
             .expect("species, rig, and action references should resolve");
 
         assert_eq!(workspace.id, "character_studio");
@@ -1000,6 +1023,10 @@ mod tests {
         assert!(validate_relative_path("worlds/character_studio/world.json").is_ok());
         assert!(validate_relative_path("../outside/world.json").is_err());
         assert!(validate_relative_path("/absolute/world.json").is_err());
+        assert!(validate_relative_path(r"..\\outside\\world.json").is_err());
+        assert!(validate_relative_path(r"C:\\outside\\world.json").is_err());
+        assert!(validate_relative_path("worlds//world.json").is_err());
+        assert!(validate_relative_path("worlds/./world.json").is_err());
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let catalog = read_catalog(&root.join("worlds/catalog.json"))

@@ -96,6 +96,18 @@ pub fn validate_all(
     ensure!(
         engine
             .rendering
+            .key_light_color_srgba
+            .iter()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value)),
+        "key light color must contain finite sRGBA values in [0, 1]"
+    );
+    ensure!(
+        (engine.rendering.key_light_color_srgba[3] - 1.0).abs() <= f32::EPSILON,
+        "directional key light alpha must equal 1.0"
+    );
+    ensure!(
+        engine
+            .rendering
             .key_light_rotation_degrees_xyz
             .iter()
             .all(|value| value.is_finite()),

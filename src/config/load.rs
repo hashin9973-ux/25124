@@ -76,6 +76,32 @@ impl RuntimeConfig {
         assets_dir: PathBuf,
         world_manifest_path: PathBuf,
     ) -> Result<Self> {
+        let root_dir = root_dir
+            .canonicalize()
+            .with_context(|| format!("could not resolve project root '{}'", root_dir.display()))?;
+        let data_dir = data_dir
+            .canonicalize()
+            .with_context(|| format!("could not resolve world data directory '{}'", data_dir.display()))?;
+        let assets_dir = assets_dir
+            .canonicalize()
+            .with_context(|| format!("could not resolve world assets directory '{}'", assets_dir.display()))?;
+        let world_manifest_path = world_manifest_path
+            .canonicalize()
+            .with_context(|| format!("could not resolve world manifest '{}'", world_manifest_path.display()))?;
+
+        for (label, path) in [
+            ("data", &data_dir),
+            ("assets", &assets_dir),
+            ("world manifest", &world_manifest_path),
+        ] {
+            anyhow::ensure!(
+                path.starts_with(&root_dir),
+                "{label} path '{}' must remain inside project root '{}'",
+                path.display(),
+                root_dir.display()
+            );
+        }
+
         let engine: EngineSettings = read_json(&data_dir.join("engine.json"))?;
         let materials: MaterialCatalog = read_json(&data_dir.join("materials.json"))?;
         let components: ComponentCatalog = read_json(&data_dir.join("components.json"))?;

@@ -81,10 +81,11 @@ pub(super) fn spawn_water(
 ) {
     let mesh = meshes.add(create_water_mesh(GRID, WATER_SIZE));
     let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.018, 0.115, 0.15),
-        perceptual_roughness: 0.085,
-        metallic: 0.52,
-        reflectance: 0.96,
+        base_color: Color::srgb(0.012, 0.075, 0.13),
+        perceptual_roughness: 0.089,
+        metallic: 0.0,
+        reflectance: 0.25,
+        ior: 1.333,
         cull_mode: Some(Face::Back),
         ..default()
     });

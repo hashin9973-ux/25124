@@ -165,7 +165,6 @@ fn add_visual(
             GltfAssetLabel::Scene(scene_index).from_asset(resolved_asset_path);
         entity.with_children(|children| {
             children.spawn((
-                WorldInstanceEntity,
                 WorldAssetRoot(asset_server.load(scene_path)),
                 Transform::default(),
             ));

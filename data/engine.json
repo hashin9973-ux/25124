@@ -24,12 +24,18 @@
     "mouse_radians_per_pixel": 0.0025
   },
   "rendering": {
-    "key_light_illuminance_lux": 12000,
+    "key_light_illuminance_lux": 100000,
     "key_light_rotation_degrees_xyz": [
       -48.7,
       -31.51,
       0
     ],
-    "shadows_enabled": true
+    "shadows_enabled": true,
+    "key_light_color_srgba": [
+      1,
+      0.965,
+      0.91,
+      1
+    ]
   }
 }

@@ -33,7 +33,7 @@ The world catalog stores relative paths for each world's manifest, data, assets 
 
 The main menu and world browser use a procedural water surface with travelling waves and radial ripples. Pointer motion, clicks and periodic random impulses add ripples. Raised 3D text callouts have black offset geometry, white foreground text, stems, hover scaling and click actions. Worlds is active; Mods and Settings are intentionally present but inactive.
 
-The water is currently a procedurally displaced mesh shaded by a PBR material and the project's directional light. This is an initial visual implementation, not yet a physically based ocean renderer: environment-cubemap reflections, refraction, screen-space reflections, caustics and a dedicated water shader are not implemented.
+The water is currently a procedurally displaced, top-facing mesh with a low-roughness dielectric PBR material (water IOR 1.333), lit by a warm directional sun configured in lux. This is an initial visual implementation, not yet a full physically based ocean renderer: environment-cubemap reflections, refraction, screen-space reflections, caustics and a dedicated water shader are not implemented.
 
 ## Physics foundation
 

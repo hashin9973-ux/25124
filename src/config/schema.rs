@@ -37,6 +37,7 @@ pub struct CameraSettings {
 #[serde(deny_unknown_fields)]
 pub struct RenderingSettings {
     pub key_light_illuminance_lux: f32,
+    pub key_light_color_srgba: [f32; 4],
     pub key_light_rotation_degrees_xyz: [f32; 3],
     pub shadows_enabled: bool,
 }
