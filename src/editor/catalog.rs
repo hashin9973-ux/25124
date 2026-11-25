@@ -1553,7 +1553,7 @@ mod tests {
 
     use super::{
         CharacterStudioWorkspace, WorldCatalog, WorldCatalogEntry, WorldKind, read_catalog,
-        validate_action_set, validate_relative_path, write_catalog,
+        read_json, validate_action_set, validate_relative_path, write_catalog,
     };
 
     #[test]
