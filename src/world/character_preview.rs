@@ -139,7 +139,7 @@ pub(super) fn spawn_rig(
     let preview_visual = config
         .components
         .definitions
-        .get("species.segment_proxy")
+        .get("rig.segment_proxy")
         .map(|definition| &definition.visual)
         .context("Character Studio components are missing 'species.segment_proxy'")?;
     let preview_material = materials.add(StandardMaterial {

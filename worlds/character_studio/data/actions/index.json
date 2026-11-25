@@ -1,10 +1,4 @@
 {
   "schema_version": 1,
-  "action_sets": [
-    {
-      "id": "human_locomotion",
-      "species": "human",
-      "file": "worlds/character_studio/outputs/actions/human.locomotion.actions.json"
-    }
-  ]
+  "action_sets": []
 }

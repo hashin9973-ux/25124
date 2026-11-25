@@ -77,9 +77,9 @@ jobs:
             "worlds/sandbox/world.json",
             "worlds/character_studio/world.json",
             "worlds/character_studio/data/editor/workspace.json",
-            "worlds/character_studio/data/rigs/human.rig.json",
-            "worlds/character_studio/outputs/species/human.species.json",
-            "worlds/character_studio/outputs/actions/human.locomotion.actions.json"
+            "worlds/character_studio/data/editor/tools.json",
+            "worlds/character_studio/data/species/index.json",
+            "worlds/character_studio/data/actions/index.json"
           )
           foreach ($path in $requiredFiles) {
             $candidate = Join-Path $root $path
@@ -111,6 +111,11 @@ jobs:
             if ($worldIds -notcontains $requiredId) {
               throw "Portable world catalog is missing required world: $requiredId"
             }
+          }
+
+          $studioManifest = Get-Content -LiteralPath (Join-Path $root "worlds/character_studio/world.json") -Raw | ConvertFrom-Json
+          if (@($studioManifest.objects).Count -ne 0) {
+            throw "Character Studio must start with an empty world composition"
           }
 
           foreach ($world in $catalog.worlds) {

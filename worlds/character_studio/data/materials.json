@@ -17,22 +17,6 @@
       "linear_damping": 0,
       "angular_damping": 0
     },
-    "soft_tissue": {
-      "density_kg_m3": 1050,
-      "static_friction": 0.62,
-      "dynamic_friction": 0.48,
-      "restitution": 0.02,
-      "linear_damping": 0.08,
-      "angular_damping": 0.1
-    },
-    "cortical_bone": {
-      "density_kg_m3": 1850,
-      "static_friction": 0.72,
-      "dynamic_friction": 0.58,
-      "restitution": 0.02,
-      "linear_damping": 0.04,
-      "angular_damping": 0.06
-    },
     "rubber": {
       "density_kg_m3": 1100,
       "static_friction": 1,
@@ -40,6 +24,14 @@
       "restitution": 0.2,
       "linear_damping": 0.12,
       "angular_damping": 0.18
+    },
+    "editor_default": {
+      "density_kg_m3": 1000,
+      "static_friction": 0.6,
+      "dynamic_friction": 0.5,
+      "restitution": 0.05,
+      "linear_damping": 0.05,
+      "angular_damping": 0.05
     }
   }
 }

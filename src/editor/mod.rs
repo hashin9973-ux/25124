@@ -24,6 +24,7 @@ pub enum MenuAction {
     OpenWorldBrowser,
     BackToMainMenu,
     LoadWorld(String),
+    CreateSpecies,
     CreateWorld,
     PreviousWorldPage,
     NextWorldPage,

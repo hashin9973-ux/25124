@@ -136,24 +136,26 @@ pub(super) fn spawn_world(
     }
 
     if active_world.kind == Some(WorldKind::CharacterStudio) {
-        if let Some(rig) = studio_workspace
-            .rigs
-            .iter()
-            .find(|rig| rig.species == studio_workspace.preview_species)
-        {
-            if let Err(error) = character_preview::spawn_rig(
-                &mut commands,
-                rig,
-                &config,
-                &mut meshes,
-                &mut materials,
-                Vec3::from_array(studio_workspace.preview_origin_m),
-                &studio_workspace.preview_joint_damping,
-            ) {
-                error!("Could not spawn species preview '{}': {error:#}", rig.species);
+        if let Some(preview_species) = studio_workspace.preview_species.as_deref() {
+            if let Some(rig) = studio_workspace
+                .rigs
+                .iter()
+                .find(|rig| rig.species == preview_species)
+            {
+                if let Err(error) = character_preview::spawn_rig(
+                    &mut commands,
+                    rig,
+                    &config,
+                    &mut meshes,
+                    &mut materials,
+                    Vec3::from_array(studio_workspace.preview_origin_m),
+                    &studio_workspace.preview_joint_damping,
+                ) {
+                    error!("Could not spawn species preview '{}': {error:#}", rig.species);
+                }
+            } else {
+                warn!("Selected preview species '{preview_species}' has no validated rig");
             }
-        } else {
-            warn!("Character Studio has no validated species rig to preview");
         }
     }
 

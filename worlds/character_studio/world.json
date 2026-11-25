@@ -3,48 +3,5 @@
   "id": "character_studio",
   "name": "Character Studio",
   "gravity_m_s2": null,
-  "objects": [
-    {
-      "id": "studio_floor",
-      "definition": "studio.floor",
-      "position_m": [
-        0,
-        -0.3,
-        0
-      ],
-      "rotation_degrees_xyz": [
-        0,
-        0,
-        0
-      ]
-    },
-    {
-      "id": "workbench",
-      "definition": "studio.workbench",
-      "position_m": [
-        0,
-        1,
-        0
-      ],
-      "rotation_degrees_xyz": [
-        0,
-        0,
-        0
-      ]
-    },
-    {
-      "id": "reference_pedestal",
-      "definition": "studio.reference_pedestal",
-      "position_m": [
-        4,
-        0.6,
-        -1
-      ],
-      "rotation_degrees_xyz": [
-        0,
-        0,
-        0
-      ]
-    }
-  ]
+  "objects": []
 }

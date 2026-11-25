@@ -121,7 +121,7 @@ pub struct CharacterStudioWorkspace {
     pub id: String,
     pub display_name: String,
     pub units: String,
-    pub preview_species: String,
+    pub preview_species: Option<String>,
     pub preview_origin_m: [f32; 3],
     pub preview_joint_damping: PreviewJointDamping,
     pub species_index: String,
@@ -141,7 +141,7 @@ struct WorkspaceFile {
     id: String,
     display_name: String,
     units: String,
-    preview_species: String,
+    preview_species: Option<String>,
     preview_origin_m: [f32; 3],
     rigging_settings: String,
     species_index: String,
@@ -150,14 +150,14 @@ struct WorkspaceFile {
     output_directories: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SpeciesIndexFile {
     schema_version: u32,
     species: Vec<SpeciesIndexEntry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SpeciesIndexEntry {
     id: String,
@@ -303,56 +303,59 @@ impl CharacterStudioWorkspace {
             let species: Value = read_json(&species_path)?;
             validate_document_id(&species, &reference.id, &species_path)?;
 
-            let rig_reference = species
-                .get("rig")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("species '{}' is missing its rig path", reference.id))?;
-            let rig_path = safe_project_path(project_root, rig_reference)?;
-            let rig: Value = read_json(&rig_path)?;
-            ensure!(
-                rig.get("schema_version").and_then(Value::as_u64) == Some(1),
-                "unsupported rig schema in '{}'",
-                rig_path.display()
-            );
-            ensure!(
-                rig.get("species").and_then(Value::as_str) == Some(reference.id.as_str()),
-                "rig '{}' does not belong to species '{}'",
-                rig_path.display(),
-                reference.id
-            );
-
-            let segment_ids = collect_ids(&rig, "segments", &rig_path)?;
-            let joint_ids = collect_ids(&rig, "joints", &rig_path)?;
-            validate_rig(&rig, &segment_ids, &joint_ids, &rig_path)?;
-
-            for segment in rig.get("segments").and_then(Value::as_array).into_iter().flatten() {
-                let material_id = segment
-                    .get("material")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "rig segment in '{}' is missing a material id",
-                        rig_path.display()
-                    ))?;
+            if let Some(rig_reference) = species.get("rig").filter(|value| !value.is_null()) {
+                let rig_reference = rig_reference.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("species '{}' rig must be a relative path or null", reference.id)
+                })?;
+                let rig_path = safe_project_path(project_root, rig_reference)?;
+                let rig: Value = read_json(&rig_path)?;
                 ensure!(
-                    physical_materials.contains_key(material_id),
-                    "rig '{}' references unknown physical material '{}'",
-                    rig_path.display(),
-                    material_id
+                    rig.get("schema_version").and_then(Value::as_u64) == Some(1),
+                    "unsupported rig schema in '{}'",
+                    rig_path.display()
                 );
-            }
+                ensure!(
+                    rig.get("species").and_then(Value::as_str) == Some(reference.id.as_str()),
+                    "rig '{}' does not belong to species '{}'",
+                    rig_path.display(),
+                    reference.id
+                );
 
-            let typed_rig: CharacterRigDefinition = serde_json::from_value(rig.clone())
-                .with_context(|| format!("invalid typed rig data in '{}'", rig_path.display()))?;
-            rig_ids.insert(reference.id.clone(), (segment_ids, joint_ids));
+                let segment_ids = collect_ids(&rig, "segments", &rig_path)?;
+                let joint_ids = collect_ids(&rig, "joints", &rig_path)?;
+                validate_rig(&rig, &segment_ids, &joint_ids, &rig_path)?;
+
+                for segment in rig.get("segments").and_then(Value::as_array).into_iter().flatten() {
+                    let material_id = segment
+                        .get("material")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "rig segment in '{}' is missing a material id",
+                            rig_path.display()
+                        ))?;
+                    ensure!(
+                        physical_materials.contains_key(material_id),
+                        "rig '{}' references unknown physical material '{}'",
+                        rig_path.display(),
+                        material_id
+                    );
+                }
+
+                let typed_rig: CharacterRigDefinition = serde_json::from_value(rig.clone())
+                    .with_context(|| format!("invalid typed rig data in '{}'", rig_path.display()))?;
+                rig_ids.insert(reference.id.clone(), (segment_ids, joint_ids));
+                rig_documents.push(typed_rig);
+            }
             species_documents.push(species);
-            rig_documents.push(typed_rig);
         }
 
-        ensure!(
-            species_ids.contains(workspace.preview_species.as_str()),
-            "workspace preview species '{}' is not present in the species index",
-            workspace.preview_species
-        );
+        if let Some(preview_species) = &workspace.preview_species {
+            ensure!(
+                species_ids.contains(preview_species.as_str()),
+                "workspace preview species '{}' is not present in the species index",
+                preview_species
+            );
+        }
 
         let mut action_set_ids = HashSet::new();
         let mut action_documents = Vec::with_capacity(actions_index.action_sets.len());
@@ -378,9 +381,13 @@ impl CharacterStudioWorkspace {
                 "action set '{}' species does not match its index entry",
                 reference.id
             );
-            let (segments, joints) = rig_ids
-                .get(&reference.species)
-                .expect("species index and rig ids were loaded together");
+            let (segments, joints) = rig_ids.get(&reference.species).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "action set '{}' references species '{}' without an authored rig",
+                    reference.id,
+                    reference.species
+                )
+            })?;
             validate_action_set(
                 &action_set,
                 segments,
@@ -413,6 +420,99 @@ impl CharacterStudioWorkspace {
             tool_catalog,
         })
     }
+}
+
+fn create_species_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> Result<String> {
+    ensure!(
+        entry.kind == WorldKind::CharacterStudio,
+        "species can only be created in the Character Studio world"
+    );
+    let project_root = project_root
+        .canonicalize()
+        .with_context(|| format!("could not resolve project root '{}'", project_root.display()))?;
+    let data_dir = safe_project_path(&project_root, &entry.data)?;
+    let outputs_dir = safe_project_path(&project_root, &entry.outputs)?;
+    let workspace = CharacterStudioWorkspace::load(&project_root, &data_dir, &entry.id)?;
+    let index_path = safe_project_path(&data_dir, &workspace.species_index)?;
+    let species_output_dir = outputs_dir.join("species");
+    fs::create_dir_all(&species_output_dir).with_context(|| {
+        format!("could not create species output directory '{}'", species_output_dir.display())
+    })?;
+    let species_output_dir = species_output_dir.canonicalize().with_context(|| {
+        format!("could not resolve species output directory '{}'", species_output_dir.display())
+    })?;
+    persist_new_species_definition(&project_root, &index_path, &species_output_dir)
+}
+
+fn persist_new_species_definition(
+    project_root: &Path,
+    index_path: &Path,
+    species_output_dir: &Path,
+) -> Result<String> {
+    let project_root = project_root
+        .canonicalize()
+        .with_context(|| format!("could not resolve project root '{}'", project_root.display()))?;
+    let index_path = index_path
+        .canonicalize()
+        .with_context(|| format!("could not resolve species index '{}'", index_path.display()))?;
+    let species_output_dir = species_output_dir
+        .canonicalize()
+        .with_context(|| format!("could not resolve species output directory '{}'", species_output_dir.display()))?;
+    ensure!(
+        index_path.starts_with(&project_root) && species_output_dir.starts_with(&project_root),
+        "species index and output directory must remain inside the project root"
+    );
+
+    let mut index: SpeciesIndexFile = read_json(&index_path)?;
+    ensure!(
+        index.schema_version == 1,
+        "unsupported species index schema version {}",
+        index.schema_version
+    );
+
+    let mut sequence = 1_u32;
+    let id = loop {
+        let candidate = format!("species_{sequence:03}");
+        let candidate_path = species_output_dir.join(format!("{candidate}.species.json"));
+        if !candidate_path.exists()
+            && !index.species.iter().any(|species| species.id == candidate)
+        {
+            break candidate;
+        }
+        sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("species identifier sequence is exhausted"))?;
+    };
+
+    let display_name = format!("Untitled Species {sequence}");
+    let species_path = species_output_dir.join(format!("{id}.species.json"));
+    let file = species_path
+        .strip_prefix(&project_root)
+        .context("species output path escaped the project root")?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "id": id,
+        "display_name": display_name,
+        "model": null,
+        "rig": null,
+        "action_sets": []
+    });
+
+    write_json(&species_path, &document)?;
+    index.species.push(SpeciesIndexEntry {
+        id: id.clone(),
+        name: display_name,
+        file,
+    });
+    if let Err(error) = write_json(&index_path, &index) {
+        let _ = fs::remove_file(&species_path);
+        return Err(error);
+    }
+
+    info!("Created empty species definition '{id}'");
+    Ok(id)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -1325,6 +1425,27 @@ pub(super) fn process_menu_command(
             }
             Ok(())
         }
+        MenuAction::CreateSpecies => (|| {
+            let studio = catalog
+                .worlds
+                .iter()
+                .find(|world| world.kind == WorldKind::CharacterStudio)
+                .cloned()
+                .context("Character Studio is not registered in the world catalog")?;
+            let species_id = create_species_for_world(&root.0, &studio)?;
+            info!("Created species draft '{species_id}' in Character Studio");
+            open_world(WorldOpenContext {
+                project_root: &root.0,
+                entry: &studio,
+                runtime_config: &mut runtime_config,
+                state_file: &mut state_file,
+                save_target: &mut save_target,
+                gravity: &mut gravity,
+                active_world: &mut active_world,
+                studio_workspace: &mut studio_workspace,
+                next_screen: &mut next_screen,
+            })
+        })(),
         MenuAction::CreateWorld => {
             create_empty_world(&root.0, &mut catalog).and_then(|world| {
                 open_world(WorldOpenContext {
@@ -1566,27 +1687,24 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        CharacterStudioWorkspace, WorldCatalog, WorldCatalogEntry, WorldKind, read_catalog,
-        read_json, validate_action_set, validate_relative_path, write_catalog,
+        CharacterStudioWorkspace, SpeciesIndexFile, WorldCatalog, WorldCatalogEntry, WorldKind,
+        persist_new_species_definition, read_catalog, read_json, validate_action_set,
+        validate_relative_path, write_catalog,
     };
 
     #[test]
-    fn checked_in_character_studio_data_cross_references_load() {
+    fn checked_in_character_studio_workspace_loads_empty() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let data_dir = root.join("worlds/character_studio/data");
         let workspace = CharacterStudioWorkspace::load(root, &data_dir, "character_studio")
-            .expect("species, rig, and action references should resolve");
+            .expect("empty Character Studio workspace should load");
 
         assert_eq!(workspace.id, "character_studio");
         assert_eq!(workspace.display_name, "Character Studio");
-        assert_eq!(workspace.preview_species, "human");
-        assert_eq!(workspace.preview_origin_m, [-4.5, 0.0, 1.0]);
-        assert_eq!(workspace.preview_joint_damping.angular, 0.32);
-        assert_eq!(workspace.species.len(), 1);
-        assert_eq!(workspace.rigs.len(), 1);
-        assert_eq!(workspace.rigs[0].segments.len(), 16);
-        assert_eq!(workspace.rigs[0].joints.len(), 15);
-        assert_eq!(workspace.action_sets.len(), 1);
+        assert!(workspace.preview_species.is_none());
+        assert!(workspace.species.is_empty());
+        assert!(workspace.rigs.is_empty());
+        assert!(workspace.action_sets.is_empty());
         assert!(
             workspace
                 .tool_catalog
@@ -1597,104 +1715,175 @@ mod tests {
     }
 
     #[test]
-    fn human_action_contract_validates_surface_geometry_and_rotation_thresholds() {
+    fn generic_action_contract_validates_physical_conditions_and_bounded_actuators() {
         use std::collections::HashSet;
 
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let workspace = CharacterStudioWorkspace::load(
-            root,
-            &root.join("worlds/character_studio/data"),
-            "character_studio",
-        )
-        .expect("Character Studio data should load");
-        let rig = &workspace.rigs[0];
-        let segments = rig.segments.iter().map(|segment| segment.id.clone()).collect::<HashSet<_>>();
-        let joints = rig.joints.iter().map(|joint| joint.id.clone()).collect::<HashSet<_>>();
-        let action_set = &workspace.action_sets[0];
-
-        let component_data: Value = read_json(
-            &root.join("worlds/character_studio/data/components.json")
-        )
-        .expect("world component definitions should load");
-        let mut world_surface_tags = HashSet::new();
-        for definition in component_data["definitions"]
-            .as_object()
-            .expect("component definitions object")
-            .values()
-        {
-            if let Some(tags) = definition.get("tags").and_then(Value::as_array) {
-                for tag in tags {
-                    world_surface_tags.insert(
-                        tag.as_str().expect("component surface tags are strings").to_owned()
-                    );
-                }
-            }
-        }
+        let segments = HashSet::from(["segment_a".to_owned()]);
+        let joints = HashSet::from(["joint_a".to_owned()]);
+        let surface_tags = HashSet::from(["support_surface".to_owned()]);
+        let action_set = serde_json::json!({
+            "execution_policy": {
+                "forces_and_joint_motors_only": true,
+                "allow_impulses": false,
+                "allow_root_teleport": false,
+                "allow_rotation_locks": false,
+                "allow_external_object_push": false
+            },
+            "actions": [{
+                "id": "apply_joint_actuation",
+                "activation": "while_trigger_and_conditions_hold",
+                "triggers": [
+                    {"kind": "key_pressed", "key": "KeyX"},
+                    {"kind": "key_held", "key": "KeyY"},
+                    {
+                        "kind": "collision",
+                        "segment": "segment_a",
+                        "other_tags": ["support_surface"],
+                        "minimum_relative_speed_m_s": 0.1
+                    }
+                ],
+                "conditions": [
+                    {
+                        "kind": "surface_contact",
+                        "segments": ["segment_a"],
+                        "surface_tags": ["support_surface"],
+                        "minimum_normal_dot": 0.5
+                    },
+                    {
+                        "kind": "surface_geometry",
+                        "segments": ["segment_a"],
+                        "surface_tags": ["support_surface"],
+                        "geometry": {
+                            "kind": "plane",
+                            "normal_world": [0.0, 1.0, 0.0],
+                            "offset_m": 0.0
+                        },
+                        "maximum_slope_degrees": 35.0
+                    },
+                    {
+                        "kind": "joint_angle_threshold",
+                        "joint": "joint_a",
+                        "axis_local": [1.0, 0.0, 0.0],
+                        "comparison": "less_than",
+                        "angle_degrees": 30.0
+                    },
+                    {
+                        "kind": "segment_rotation_threshold",
+                        "segment": "segment_a",
+                        "axis_local": [1.0, 0.0, 0.0],
+                        "reference_rotation_degrees_xyz": [0.0, 0.0, 0.0],
+                        "comparison": "less_than",
+                        "angle_degrees": 30.0
+                    }
+                ],
+                "actuators": [
+                    {
+                        "joint": "joint_a",
+                        "kind": "joint_torque",
+                        "axis_local": [1.0, 0.0, 0.0],
+                        "torque_nm": 2.0,
+                        "torque_limit_nm": 5.0
+                    },
+                    {
+                        "joint": "joint_a",
+                        "kind": "joint_angular_velocity_target",
+                        "axis_local": [1.0, 0.0, 0.0],
+                        "target_rad_s": 0.5,
+                        "torque_limit_nm": 5.0
+                    }
+                ]
+            }]
+        });
 
         validate_action_set(
-            action_set,
+            &action_set,
             &segments,
             &joints,
-            &world_surface_tags,
-            &root.join("worlds/character_studio/outputs/actions/human.locomotion.actions.json"),
+            &surface_tags,
+            Path::new("generic-action.json"),
         )
-        .expect("sample action contract should validate");
+        .expect("generic action conditions and actuators should validate");
 
-        let action_kinds = action_set
-            .get("actions")
-            .and_then(Value::as_array)
-            .expect("actions array")
-            .iter()
-            .flat_map(|action| {
-                ["triggers", "conditions"]
-                    .into_iter()
-                    .flat_map(move |key| {
-                        action
-                            .get(key)
-                            .and_then(Value::as_array)
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|entry| entry.get("kind").and_then(Value::as_str))
-                    })
-            })
-            .collect::<HashSet<_>>();
-
-        assert!(action_kinds.contains("key_pressed"));
-        assert!(action_kinds.contains("key_held"));
-        assert!(action_kinds.contains("collision"));
-        assert!(action_kinds.contains("surface_contact"));
-        assert!(action_kinds.contains("surface_geometry"));
-        assert!(action_kinds.contains("joint_angle_threshold"));
-        assert!(action_kinds.contains("segment_rotation_threshold"));
-
-        let mut invalid = action_set.clone();
-        invalid["actions"][0]["actuators"][0]["torque_nm"] = serde_json::json!(1000.0);
+        let mut excessive_torque = action_set.clone();
+        excessive_torque["actions"][0]["actuators"][0]["torque_nm"] = serde_json::json!(6.0);
         assert!(
             validate_action_set(
-                &invalid,
+                &excessive_torque,
                 &segments,
                 &joints,
-                &world_surface_tags,
-                &root.join("invalid-action.json"),
+                &surface_tags,
+                Path::new("invalid-torque.json"),
             )
             .is_err(),
-            "action validator must reject torque commands above their authored limit"
+            "action validation must reject torque above the authored limit"
         );
 
-        let mut invalid_tag = action_set.clone();
-        invalid_tag["actions"][0]["conditions"][0]["surface_tags"][0] =
-            serde_json::json!("missing_surface_tag");
+        let mut unknown_surface = action_set.clone();
+        unknown_surface["actions"][0]["conditions"][0]["surface_tags"][0] =
+            serde_json::json!("undefined_surface");
         assert!(
             validate_action_set(
-                &invalid_tag,
+                &unknown_surface,
                 &segments,
                 &joints,
-                &world_surface_tags,
-                &root.join("invalid-surface-tag.json"),
+                &surface_tags,
+                Path::new("invalid-surface.json"),
             )
             .is_err(),
-            "action validator must reject surface tags not defined by the world"
+            "action validation must reject unknown surface tags"
         );
+    }
+
+    #[test]
+    fn species_creation_persists_an_empty_definition_without_model_or_rig() {
+        use std::fs;
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "physics-sandbox-species-create-{}-{timestamp}",
+            std::process::id()
+        ));
+        let data_dir = root.join("worlds/character_studio/data/species");
+        let output_dir = root.join("worlds/character_studio/outputs/species");
+        fs::create_dir_all(&data_dir).expect("species index directory should be created");
+        fs::create_dir_all(&output_dir).expect("species output directory should be created");
+        let index_path = data_dir.join("index.json");
+        fs::write(
+            &index_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "species": []
+            }))
+            .expect("empty index should serialize"),
+        )
+        .expect("empty species index should be written");
+
+        let project_root = root.canonicalize().expect("temporary project root should resolve");
+        let first = persist_new_species_definition(&project_root, &index_path, &output_dir)
+            .expect("first species draft should persist");
+        let second = persist_new_species_definition(&project_root, &index_path, &output_dir)
+            .expect("second species draft should persist");
+        assert_eq!(first, "species_001");
+        assert_eq!(second, "species_002");
+
+        let index: SpeciesIndexFile = read_json(&index_path).expect("updated index should load");
+        assert_eq!(index.species.len(), 2);
+        assert_eq!(index.species[0].id, first);
+        assert!(index.species[0].file.ends_with("species_001.species.json"));
+
+        let document: Value = read_json(&output_dir.join("species_001.species.json"))
+            .expect("species draft should be valid JSON");
+        assert_eq!(document["id"], "species_001");
+        assert_eq!(document["model"], Value::Null);
+        assert_eq!(document["rig"], Value::Null);
+        assert_eq!(document["action_sets"], serde_json::json!([]));
+        assert!(document.get("segments").is_none());
+        assert!(document.get("joints").is_none());
+
+        fs::remove_dir_all(root).expect("temporary project should be cleaned up");
     }
 
     #[test]
@@ -1831,117 +2020,3 @@ mod tests {
     }
 }
 
-
-#[cfg(test)]
-mod preview_rig_tests {
-    use std::collections::HashMap;
-    use std::path::Path;
-
-    use bevy::prelude::{EulerRot, Quat, Vec3};
-
-    use super::CharacterStudioWorkspace;
-
-    #[test]
-    fn human_rig_joint_anchors_coincide_in_the_authored_rest_pose() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let workspace = CharacterStudioWorkspace::load(
-            root,
-            &root.join("worlds/character_studio/data"),
-            "character_studio",
-        )
-        .expect("Character Studio data should load");
-        let rig = workspace
-            .rigs
-            .iter()
-            .find(|rig| rig.species == "human")
-            .expect("human rig should be indexed");
-
-        let mut transforms = HashMap::<String, (Vec3, Quat)>::new();
-        let mut pending = rig.segments.iter().collect::<Vec<_>>();
-        while !pending.is_empty() {
-            let previous_pending = pending.len();
-            let mut remaining = Vec::with_capacity(previous_pending);
-
-            for segment in pending {
-                let parent = match segment.parent.as_deref() {
-                    Some(parent_id) => transforms.get(parent_id).copied(),
-                    None => Some((Vec3::ZERO, Quat::IDENTITY)),
-                };
-                let Some((parent_position, parent_rotation)) = parent else {
-                    remaining.push(segment);
-                    continue;
-                };
-
-                let local_position = Vec3::from_array(segment.local_center_m);
-                let local_rotation = Quat::from_euler(
-                    EulerRot::XYZ,
-                    segment.local_rotation_degrees_xyz[0].to_radians(),
-                    segment.local_rotation_degrees_xyz[1].to_radians(),
-                    segment.local_rotation_degrees_xyz[2].to_radians(),
-                );
-                transforms.insert(
-                    segment.id.clone(),
-                    (
-                        parent_position + parent_rotation * local_position,
-                        parent_rotation * local_rotation,
-                    ),
-                );
-            }
-
-            assert!(
-                remaining.len() < previous_pending,
-                "rig hierarchy could not be resolved"
-            );
-            pending = remaining;
-        }
-
-        for joint in &rig.joints {
-            let (parent_position, parent_rotation) = transforms[&joint.parent];
-            let (child_position, child_rotation) = transforms[&joint.child];
-            let parent_anchor = parent_position
-                + parent_rotation * Vec3::from_array(joint.anchor_parent_m);
-            let child_anchor =
-                child_position + child_rotation * Vec3::from_array(joint.anchor_child_m);
-            let mismatch = parent_anchor.distance(child_anchor);
-
-            assert!(
-                mismatch <= 1.0e-4,
-                "joint '{}' rest-pose anchors differ by {mismatch:.6} m",
-                joint.id
-            );
-        }
-
-        for (segment_id, proximal_joint_id, distal_joint_id) in [
-            ("upper_arm_l", "shoulder_l", "elbow_l"),
-            ("lower_arm_l", "elbow_l", "wrist_l"),
-            ("upper_arm_r", "shoulder_r", "elbow_r"),
-            ("lower_arm_r", "elbow_r", "wrist_r"),
-        ] {
-            let world_axis = transforms[segment_id].1 * Vec3::Y;
-
-            let joint_anchor = |joint_id: &str, segment_is_child: bool| {
-                let joint = rig
-                    .joints
-                    .iter()
-                    .find(|joint| joint.id == joint_id)
-                    .expect("arm joint should exist");
-                if segment_is_child {
-                    let (position, rotation) = transforms[&joint.child];
-                    position + rotation * Vec3::from_array(joint.anchor_child_m)
-                } else {
-                    let (position, rotation) = transforms[&joint.parent];
-                    position + rotation * Vec3::from_array(joint.anchor_parent_m)
-                }
-            };
-
-            let proximal = joint_anchor(proximal_joint_id, true);
-            let distal = joint_anchor(distal_joint_id, false);
-            let bone_axis = (distal - proximal).normalize();
-
-            assert!(
-                world_axis.dot(bone_axis) > 0.995,
-                "capsule axis for '{segment_id}' is not aligned with its authored bone axis"
-            );
-        }
-    }
-}

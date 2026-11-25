@@ -92,20 +92,20 @@
         "solid_surface"
       ]
     },
-    "species.segment_proxy": {
+    "rig.segment_proxy": {
       "body_type": "dynamic",
       "collider": {
         "kind": "capsule",
         "radius": 0.12,
         "segment_length": 0.42
       },
-      "material": "soft_tissue",
+      "material": "editor_default",
       "visual": {
         "model": null,
         "color_srgba": [
-          0.47,
-          0.32,
-          0.25,
+          0.58,
+          0.62,
+          0.68,
           1
         ],
         "perceptual_roughness": 0.7,

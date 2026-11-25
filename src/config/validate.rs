@@ -379,8 +379,8 @@ mod tests {
         .expect("Character Studio configuration should validate");
 
         assert_eq!(config.world.id, "character_studio");
-        assert_eq!(config.world.objects.len(), 3);
-        assert!(config.components.definitions.contains_key("species.segment_proxy"));
+        assert!(config.world.objects.is_empty());
+        assert!(config.components.definitions.contains_key("rig.segment_proxy"));
         let floor_tags = &config.components.definitions["studio.floor"].tags;
         assert!(floor_tags.iter().any(|tag| tag == "walkable"));
         assert!(floor_tags.iter().any(|tag| tag == "ground"));
