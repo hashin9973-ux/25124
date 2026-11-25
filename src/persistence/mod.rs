@@ -95,7 +95,7 @@ fn save_world_on_f5(
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use super::super::{PersistedBodyState, WorldStateFile};
+    use super::{PersistedBodyState, WorldStateFile};
 
     #[test]
     fn save_snapshot_preserves_only_records_not_owned_by_current_world_instances() {
