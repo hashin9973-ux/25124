@@ -10,9 +10,6 @@ struct StudioCallout {
     hit_extent: Vec2,
 }
 
-#[derive(Component)]
-struct StudioCalloutScene;
-
 pub(super) fn ensure_studio_callouts(
     mut commands: Commands,
     active_world: Res<ActiveWorld>,
@@ -29,7 +26,6 @@ pub(super) fn ensure_studio_callouts(
 
     let mut callout = commands.spawn((
         Name::new("Create species annotation"),
-        StudioCalloutScene,
         StudioCallout {
             action: MenuAction::CreateSpecies,
             hit_extent: Vec2::new(230.0, 58.0),
@@ -94,11 +90,3 @@ pub(super) fn interact_callouts(
     }
 }
 
-pub(super) fn despawn_studio_callouts(
-    mut commands: Commands,
-    entities: Query<Entity, With<StudioCalloutScene>>,
-) {
-    for entity in &entities {
-        commands.entity(entity).despawn();
-    }
-}
