@@ -2,7 +2,10 @@ mod state;
 
 pub use state::WorldStateFile;
 
-use std::{collections::{BTreeMap, HashSet}, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+};
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
