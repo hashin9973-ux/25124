@@ -5,6 +5,7 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EngineSettings {
+    pub schema_version: u32,
     pub physics: PhysicsSettings,
     pub camera: CameraSettings,
     pub rendering: RenderingSettings,
@@ -34,12 +35,14 @@ pub struct CameraSettings {
 #[serde(deny_unknown_fields)]
 pub struct RenderingSettings {
     pub key_light_illuminance_lux: f32,
+    pub key_light_rotation_degrees_xyz: [f32; 3],
     pub shadows_enabled: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaterialCatalog {
+    pub schema_version: u32,
     pub materials: BTreeMap<String, MaterialDefinition>,
 }
 
@@ -54,30 +57,26 @@ pub struct MaterialDefinition {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorldManifest {
-    pub id: String,
-    pub name: String,
-    pub gravity_m_s2: Option<[f32; 3]>,
-    pub objects: Vec<WorldObjectDefinition>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BodyType {
-    Static,
-    Dynamic,
+pub struct ComponentCatalog {
+    pub schema_version: u32,
+    pub definitions: BTreeMap<String, ComponentDefinition>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorldObjectDefinition {
-    pub id: String,
+pub struct ComponentDefinition {
     pub body_type: BodyType,
-    pub position_m: [f32; 3],
-    pub rotation_degrees_xyz: [f32; 3],
     pub collider: ColliderShape,
     pub material: String,
+    pub enable_swept_ccd: bool,
     pub visual: VisualDefinition,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyType {
+    Static,
+    Dynamic,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -88,6 +87,13 @@ pub enum ColliderShape {
     Capsule { radius: f32, segment_length: f32 },
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum AlphaMode {
+    Opaque,
+    Blend,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VisualDefinition {
@@ -95,4 +101,24 @@ pub struct VisualDefinition {
     pub color_srgba: [f32; 4],
     pub perceptual_roughness: f32,
     pub metallic: f32,
+    pub alpha_mode: AlphaMode,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldManifest {
+    pub schema_version: u32,
+    pub id: String,
+    pub name: String,
+    pub gravity_m_s2: Option<[f32; 3]>,
+    pub objects: Vec<WorldObjectInstance>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldObjectInstance {
+    pub id: String,
+    pub definition: String,
+    pub position_m: [f32; 3],
+    pub rotation_degrees_xyz: [f32; 3],
 }

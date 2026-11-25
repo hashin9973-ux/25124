@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use avian3d::prelude::{
     AngularVelocity, Collider, ColliderDensity, CollisionEventsEnabled, Friction, LinearVelocity,
     Restitution, RigidBody, SweptCcd,
@@ -5,31 +7,43 @@ use avian3d::prelude::{
 use bevy::prelude::*;
 
 use crate::{
-    config::{BodyType, ColliderShape, RuntimeConfig, WorldObjectDefinition},
-    persistence::PersistentObjectId,
+    config::{
+        AlphaMode, BodyType, ColliderShape, ComponentDefinition, RuntimeConfig, VisualDefinition,
+        WorldObjectInstance,
+    },
+    persistence::{PersistentObjectId, WorldStateFile},
 };
 
 pub(super) fn spawn_world(
     mut commands: Commands,
     config: Res<RuntimeConfig>,
+    world_state: Res<WorldStateFile>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for definition in &config.world.objects {
+    let mut mesh_cache = HashMap::<MeshKey, Handle<Mesh>>::new();
+    let mut material_cache = HashMap::<VisualMaterialKey, Handle<StandardMaterial>>::new();
+
+    for instance in &config.world.objects {
+        let definition = config
+            .components
+            .definitions
+            .get(&instance.definition)
+            .expect("component references are validated before app startup");
         let physical_material = config
             .materials
             .materials
             .get(&definition.material)
             .expect("material references are validated before app startup");
 
-        let saved = config.persisted_state.bodies.get(&definition.id);
+        let saved = world_state.bodies.get(&instance.id);
         let translation = saved
             .map(|state| Vec3::from_array(state.translation_m))
-            .unwrap_or_else(|| Vec3::from_array(definition.position_m));
+            .unwrap_or_else(|| Vec3::from_array(instance.position_m));
         let rotation = saved
             .map(|state| Quat::from_array(state.rotation_xyzw))
-            .unwrap_or_else(|| rotation_from_degrees(definition.rotation_degrees_xyz));
+            .unwrap_or_else(|| rotation_from_degrees(instance.rotation_degrees_xyz));
         let linear_velocity = saved
             .map(|state| Vec3::from_array(state.linear_velocity_m_s))
             .unwrap_or(Vec3::ZERO);
@@ -41,14 +55,13 @@ pub(super) fn spawn_world(
             BodyType::Static => RigidBody::Static,
             BodyType::Dynamic => RigidBody::Dynamic,
         };
-
         let collider = collider_from_definition(&definition.collider);
         let friction = Friction::new(physical_material.dynamic_friction)
             .with_static_coefficient(physical_material.static_friction);
 
         let mut entity = commands.spawn((
-            Name::new(definition.id.clone()),
-            PersistentObjectId(definition.id.clone()),
+            Name::new(instance.id.clone()),
+            PersistentObjectId(instance.id.clone()),
             rigid_body,
             collider,
             ColliderDensity(physical_material.density_kg_m3),
@@ -64,7 +77,7 @@ pub(super) fn spawn_world(
             },
         ));
 
-        if matches!(definition.body_type, BodyType::Dynamic) {
+        if definition.enable_swept_ccd {
             entity.insert(SweptCcd::default());
         }
 
@@ -74,43 +87,109 @@ pub(super) fn spawn_world(
             &asset_server,
             &mut meshes,
             &mut materials,
+            &mut mesh_cache,
+            &mut material_cache,
         );
     }
 
     info!(
-        "Loaded world '{}' with {} data-defined objects",
+        "Loaded world '{}' with {} instances from {} component definitions",
         config.world.name,
-        config.world.objects.len()
+        config.world.objects.len(),
+        config.components.definitions.len()
     );
 }
 
 fn add_visual(
     entity: &mut EntityCommands,
-    definition: &WorldObjectDefinition,
+    definition: &ComponentDefinition,
     asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    mesh_cache: &mut HashMap<MeshKey, Handle<Mesh>>,
+    material_cache: &mut HashMap<VisualMaterialKey, Handle<StandardMaterial>>,
 ) {
-    let visual_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(
-            definition.visual.color_srgba[0],
-            definition.visual.color_srgba[1],
-            definition.visual.color_srgba[2],
-            definition.visual.color_srgba[3],
-        ),
-        perceptual_roughness: definition.visual.perceptual_roughness,
-        metallic: definition.visual.metallic,
-        ..default()
-    });
-
     if let Some(model_path) = &definition.visual.model {
         let scene: Handle<Scene> = asset_server.load(model_path.clone());
         entity.with_children(|children| {
             children.spawn((SceneRoot(scene), Transform::default()));
         });
-    } else {
-        let mesh = mesh_from_collider_shape(&definition.collider, meshes);
-        entity.insert((Mesh3d(mesh), MeshMaterial3d(visual_material)));
+        return;
+    }
+
+    let mesh_key = MeshKey::from_shape(&definition.collider);
+    let mesh = mesh_cache
+        .entry(mesh_key)
+        .or_insert_with(|| mesh_from_collider_shape(&definition.collider, meshes))
+        .clone();
+
+    let material_key = VisualMaterialKey::from_visual(&definition.visual);
+    let material = material_cache
+        .entry(material_key)
+        .or_insert_with(|| materials.add(standard_material_from_visual(&definition.visual)))
+        .clone();
+
+    entity.insert((Mesh3d(mesh), MeshMaterial3d(material)));
+}
+
+fn standard_material_from_visual(visual: &VisualDefinition) -> StandardMaterial {
+    StandardMaterial {
+        base_color: Color::srgba(
+            visual.color_srgba[0],
+            visual.color_srgba[1],
+            visual.color_srgba[2],
+            visual.color_srgba[3],
+        ),
+        perceptual_roughness: visual.perceptual_roughness,
+        metallic: visual.metallic,
+        alpha_mode: match visual.alpha_mode {
+            AlphaMode::Opaque => bevy::prelude::AlphaMode::Opaque,
+            AlphaMode::Blend => bevy::prelude::AlphaMode::Blend,
+        },
+        ..default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum MeshKey {
+    Cuboid([u32; 3]),
+    Sphere(u32),
+    Capsule(u32, u32),
+}
+
+impl MeshKey {
+    fn from_shape(shape: &ColliderShape) -> Self {
+        match shape {
+            ColliderShape::Cuboid { half_extents } => Self::Cuboid([
+                half_extents[0].to_bits(),
+                half_extents[1].to_bits(),
+                half_extents[2].to_bits(),
+            ]),
+            ColliderShape::Sphere { radius } => Self::Sphere(radius.to_bits()),
+            ColliderShape::Capsule {
+                radius,
+                segment_length,
+            } => Self::Capsule(radius.to_bits(), segment_length.to_bits()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct VisualMaterialKey {
+    color: [u32; 4],
+    roughness: u32,
+    metallic: u32,
+    alpha_mode: AlphaMode,
+}
+
+impl VisualMaterialKey {
+    fn from_visual(visual: &VisualDefinition) -> Self {
+        Self {
+            color: visual.color_srgba.map(f32::to_bits),
+            roughness: visual.perceptual_roughness.to_bits(),
+            metallic: visual.metallic.to_bits(),
+            alpha_mode: visual.alpha_mode,
+        }
     }
 }
 

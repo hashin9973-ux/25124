@@ -4,6 +4,7 @@ mod validate;
 
 pub use load::RuntimeConfig;
 pub use schema::{
-    BodyType, CameraSettings, ColliderShape, EngineSettings, MaterialCatalog, MaterialDefinition,
-    PhysicsSettings, RenderingSettings, VisualDefinition, WorldManifest, WorldObjectDefinition,
+    AlphaMode, BodyType, CameraSettings, ColliderShape, ComponentCatalog, ComponentDefinition,
+    EngineSettings, MaterialCatalog, MaterialDefinition, PhysicsSettings, RenderingSettings,
+    VisualDefinition, WorldManifest, WorldObjectInstance,
 };

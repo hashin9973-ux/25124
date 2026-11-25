@@ -5,10 +5,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-use crate::persistence::WorldStateFile;
-
 use super::{
-    schema::{EngineSettings, MaterialCatalog, WorldManifest},
+    schema::{ComponentCatalog, EngineSettings, MaterialCatalog, WorldManifest},
     validate::validate_all,
 };
 
@@ -25,8 +23,8 @@ pub struct ProjectPaths {
 pub struct RuntimeConfig {
     pub engine: EngineSettings,
     pub materials: MaterialCatalog,
+    pub components: ComponentCatalog,
     pub world: WorldManifest,
-    pub persisted_state: WorldStateFile,
     pub paths: ProjectPaths,
 }
 
@@ -80,19 +78,19 @@ impl RuntimeConfig {
     ) -> Result<Self> {
         let engine: EngineSettings = read_json(&data_dir.join("engine.json"))?;
         let materials: MaterialCatalog = read_json(&data_dir.join("materials.json"))?;
+        let components: ComponentCatalog = read_json(&data_dir.join("components.json"))?;
         let world: WorldManifest = read_json(&world_manifest_path)?;
 
-        validate_all(&engine, &materials, &world).context("configuration validation failed")?;
+        validate_all(&engine, &materials, &components, &world)
+            .context("configuration validation failed")?;
 
         let world_state_path = world_manifest_path.with_file_name("state.json");
-        let persisted_state = WorldStateFile::load_or_default(&world_state_path, &world.id)
-            .context("failed to load world persistence state")?;
 
         Ok(Self {
             engine,
             materials,
+            components,
             world,
-            persisted_state,
             paths: ProjectPaths {
                 root_dir,
                 data_dir,

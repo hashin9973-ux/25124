@@ -28,6 +28,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install Bevy Linux development dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            g++ pkg-config libx11-dev libasound2-dev libudev-dev \
+            libxkbcommon-x11-0 libwayland-dev libxkbcommon-dev
+
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.3
 
@@ -42,3 +49,27 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  windows-portable-package:
+    name: Build and verify Windows portable package
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build portable package
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - name: Verify portable package layout
+        shell: pwsh
+        run: |
+          $root = "./dist/physics_sandbox"
+          foreach ($path in @("physics_sandbox.exe", "data/engine.json", "data/materials.json", "data/components.json", "assets", "mods", "worlds/sandbox/world.json")) {
+            if (-not (Test-Path (Join-Path $root $path))) {
+              throw "Portable package is missing: $path"
+            }
+          }

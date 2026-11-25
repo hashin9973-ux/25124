@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use avian3d::prelude::{CollisionEnd, CollisionStart};
+use avian3d::prelude::{CollisionEnd, CollisionStart, Collisions};
 use bevy::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,23 +41,32 @@ impl ContactLedger {
 pub(super) fn collect_contact_transitions(
     mut starts: MessageReader<CollisionStart>,
     mut ends: MessageReader<CollisionEnd>,
+    collisions: Collisions,
     mut ledger: ResMut<ContactLedger>,
 ) {
-    for event in starts.read() {
-        if ledger
-            .active_pairs
-            .insert(ContactPair::new(event.collider1, event.collider2))
-        {
-            ledger.total_started += 1;
-        }
-    }
+    // The two transition message streams do not share one chronological queue. Count every
+    // transition, but derive the active set from Avian's final contact graph for this frame.
+    ledger.total_started += starts.read().count() as u64;
+    ledger.total_ended += ends.read().count() as u64;
+    ledger.active_pairs = collisions
+        .iter()
+        .map(|pair| ContactPair::new(pair.collider1, pair.collider2))
+        .collect();
+}
 
-    for event in ends.read() {
-        if ledger
-            .active_pairs
-            .remove(&ContactPair::new(event.collider1, event.collider2))
-        {
-            ledger.total_ended += 1;
-        }
+#[cfg(test)]
+mod tests {
+    use bevy::prelude::Entity;
+
+    use super::ContactPair;
+
+    #[test]
+    fn contact_pair_order_is_canonical() {
+        let first = Entity::from_bits(1);
+        let second = Entity::from_bits(2);
+        assert_eq!(
+            ContactPair::new(first, second),
+            ContactPair::new(second, first)
+        );
     }
 }

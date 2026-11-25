@@ -1,15 +1,42 @@
 use std::collections::HashSet;
-use std::path::{Component, Path};
 
 use anyhow::{Result, ensure};
 
-use super::schema::{ColliderShape, EngineSettings, MaterialCatalog, WorldManifest};
+use super::schema::{
+    AlphaMode, BodyType, ColliderShape, ComponentCatalog, EngineSettings, MaterialCatalog,
+    WorldManifest,
+};
+
+const SCHEMA_VERSION: u32 = 1;
+const CAMERA_PITCH_LIMIT_DEGREES: f32 = 89.0;
 
 pub fn validate_all(
     engine: &EngineSettings,
     materials: &MaterialCatalog,
+    components: &ComponentCatalog,
     world: &WorldManifest,
 ) -> Result<()> {
+    ensure!(
+        engine.schema_version == SCHEMA_VERSION,
+        "unsupported engine schema version {}",
+        engine.schema_version
+    );
+    ensure!(
+        materials.schema_version == SCHEMA_VERSION,
+        "unsupported material catalogue schema version {}",
+        materials.schema_version
+    );
+    ensure!(
+        components.schema_version == SCHEMA_VERSION,
+        "unsupported component catalogue schema version {}",
+        components.schema_version
+    );
+    ensure!(
+        world.schema_version == SCHEMA_VERSION,
+        "unsupported world schema version {}",
+        world.schema_version
+    );
+
     let physics = &engine.physics;
     ensure!(
         physics.meters_per_unit.is_finite()
@@ -31,16 +58,14 @@ pub fn validate_all(
 
     let camera = &engine.camera;
     ensure!(
-        camera
-            .spawn_position_m
-            .iter()
-            .all(|value| value.is_finite()),
+        camera.spawn_position_m.iter().all(|value| value.is_finite()),
         "camera.spawn_position_m must contain only finite values"
     );
     ensure!(camera.yaw_degrees.is_finite(), "camera yaw must be finite");
     ensure!(
-        camera.pitch_degrees.is_finite(),
-        "camera pitch must be finite"
+        camera.pitch_degrees.is_finite()
+            && camera.pitch_degrees.abs() <= CAMERA_PITCH_LIMIT_DEGREES,
+        "camera pitch must be between -89 and 89 degrees"
     );
     ensure!(
         camera.move_speed_m_s.is_finite() && camera.move_speed_m_s > 0.0,
@@ -60,11 +85,16 @@ pub fn validate_all(
             && engine.rendering.key_light_illuminance_lux > 0.0,
         "key light illuminance must be positive and finite"
     );
-
     ensure!(
-        !materials.materials.is_empty(),
-        "material catalogue is empty"
+        engine
+            .rendering
+            .key_light_rotation_degrees_xyz
+            .iter()
+            .all(|value| value.is_finite()),
+        "key light rotation must contain only finite values"
     );
+
+    ensure!(!materials.materials.is_empty(), "material catalogue is empty");
     for (id, material) in &materials.materials {
         ensure!(!id.trim().is_empty(), "material ids cannot be empty");
         ensure!(
@@ -85,6 +115,25 @@ pub fn validate_all(
         );
     }
 
+    ensure!(
+        !components.definitions.is_empty(),
+        "component catalogue is empty"
+    );
+    for (id, definition) in &components.definitions {
+        ensure!(!id.trim().is_empty(), "component definition ids cannot be empty");
+        ensure!(
+            materials.materials.contains_key(&definition.material),
+            "component definition '{id}' references unknown material '{}'",
+            definition.material
+        );
+        validate_collider(&definition.collider, id)?;
+        validate_visual(&definition.visual, id)?;
+        ensure!(
+            !definition.enable_swept_ccd || matches!(definition.body_type, BodyType::Dynamic),
+            "static component definition '{id}' cannot enable swept CCD"
+        );
+    }
+
     ensure!(!world.id.trim().is_empty(), "world id cannot be empty");
     ensure!(!world.name.trim().is_empty(), "world name cannot be empty");
     if let Some(gravity) = world.gravity_m_s2 {
@@ -95,102 +144,118 @@ pub fn validate_all(
     }
 
     let mut ids = HashSet::with_capacity(world.objects.len());
-    for object in &world.objects {
-        ensure!(!object.id.trim().is_empty(), "object ids cannot be empty");
+    for instance in &world.objects {
+        ensure!(!instance.id.trim().is_empty(), "instance ids cannot be empty");
         ensure!(
-            ids.insert(object.id.as_str()),
-            "duplicate world object id '{}'",
-            object.id
+            ids.insert(instance.id.as_str()),
+            "duplicate world instance id '{}'",
+            instance.id
         );
         ensure!(
-            materials.materials.contains_key(&object.material),
-            "object '{}' references unknown material '{}'",
-            object.id,
-            object.material
+            components.definitions.contains_key(&instance.definition),
+            "world instance '{}' references unknown component definition '{}'",
+            instance.id,
+            instance.definition
         );
         ensure!(
-            object.position_m.iter().all(|value| value.is_finite()),
-            "object '{}' position must contain only finite values",
-            object.id
+            instance.position_m.iter().all(|value| value.is_finite()),
+            "world instance '{}' position must contain only finite values",
+            instance.id
         );
         ensure!(
-            object
-                .rotation_degrees_xyz
+            instance.rotation_degrees_xyz.iter().all(|value| value.is_finite()),
+            "world instance '{}' rotation must contain only finite values",
+            instance.id
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_collider(collider: &ColliderShape, owner: &str) -> Result<()> {
+    match collider {
+        ColliderShape::Cuboid { half_extents } => ensure!(
+            half_extents
                 .iter()
-                .all(|value| value.is_finite()),
-            "object '{}' rotation must contain only finite values",
-            object.id
-        );
+                .all(|value| value.is_finite() && *value > 0.0),
+            "component '{owner}' cuboid half_extents must be positive and finite"
+        ),
+        ColliderShape::Sphere { radius } => ensure!(
+            radius.is_finite() && *radius > 0.0,
+            "component '{owner}' sphere radius must be positive and finite"
+        ),
+        ColliderShape::Capsule {
+            radius,
+            segment_length,
+        } => ensure!(
+            radius.is_finite()
+                && *radius > 0.0
+                && segment_length.is_finite()
+                && *segment_length >= 0.0,
+            "component '{owner}' capsule dimensions are invalid"
+        ),
+    }
+}
 
-        match &object.collider {
-            ColliderShape::Cuboid { half_extents } => ensure!(
-                half_extents
-                    .iter()
-                    .all(|value| value.is_finite() && *value > 0.0),
-                "object '{}' cuboid half_extents must be positive and finite",
-                object.id
-            ),
-            ColliderShape::Sphere { radius } => ensure!(
-                radius.is_finite() && *radius > 0.0,
-                "object '{}' sphere radius must be positive and finite",
-                object.id
-            ),
-            ColliderShape::Capsule {
-                radius,
-                segment_length,
-            } => ensure!(
-                radius.is_finite()
-                    && *radius > 0.0
-                    && segment_length.is_finite()
-                    && *segment_length >= 0.0,
-                "object '{}' capsule dimensions are invalid",
-                object.id
-            ),
-        }
+fn validate_visual(visual: &super::schema::VisualDefinition, owner: &str) -> Result<()> {
+    ensure!(
+        visual
+            .color_srgba
+            .iter()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value)),
+        "component '{owner}' visual color must be finite sRGBA values in [0, 1]"
+    );
+    ensure!(
+        visual.perceptual_roughness.is_finite()
+            && (0.0..=1.0).contains(&visual.perceptual_roughness),
+        "component '{owner}' roughness must be in [0, 1]"
+    );
+    ensure!(
+        visual.metallic.is_finite() && (0.0..=1.0).contains(&visual.metallic),
+        "component '{owner}' metallic value must be in [0, 1]"
+    );
+    if matches!(visual.alpha_mode, AlphaMode::Opaque) {
+        ensure!(
+            (visual.color_srgba[3] - 1.0).abs() <= f32::EPSILON,
+            "component '{owner}' opaque visual alpha must equal 1.0"
+        );
+    }
 
-        ensure!(
-            object
-                .visual
-                .color_srgba
-                .iter()
-                .all(|value| { value.is_finite() && (0.0..=1.0).contains(value) }),
-            "object '{}' visual color must be finite sRGBA values in [0, 1]",
-            object.id
-        );
-        ensure!(
-            object.visual.perceptual_roughness.is_finite()
-                && (0.0..=1.0).contains(&object.visual.perceptual_roughness),
-            "object '{}' roughness must be in [0, 1]",
-            object.id
-        );
-        ensure!(
-            object.visual.metallic.is_finite() && (0.0..=1.0).contains(&object.visual.metallic),
-            "object '{}' metallic value must be in [0, 1]",
-            object.id
-        );
-
-        if let Some(model) = &object.visual.model {
-            validate_asset_path(model).map_err(|error| {
-                anyhow::anyhow!("object '{}' has invalid model path: {error}", object.id)
-            })?;
-        }
+    if let Some(model) = &visual.model {
+        validate_asset_path(model).map_err(|error| {
+            anyhow::anyhow!("component '{owner}' has invalid model path: {error}")
+        })?;
     }
 
     Ok(())
 }
 
 fn validate_asset_path(asset: &str) -> Result<()> {
-    let path_without_scene = asset.split('#').next().unwrap_or_default();
-    ensure!(!path_without_scene.trim().is_empty(), "model path is empty");
-    ensure!(
-        !Path::new(path_without_scene).is_absolute(),
-        "model path must be relative to the configured assets directory"
-    );
+    let mut parts = asset.split('#');
+    let asset_path = parts.next().unwrap_or_default();
+    let scene_selector = parts.next();
 
-    for component in Path::new(path_without_scene).components() {
+    ensure!(
+        parts.next().is_none(),
+        "model reference may contain only one scene selector"
+    );
+    ensure!(!asset_path.trim().is_empty(), "model path is empty");
+    ensure!(
+        !asset_path.starts_with('/') && !asset_path.contains('\\'),
+        "model paths must be relative and use forward slashes"
+    );
+    if let Some(selector) = scene_selector {
+        ensure!(!selector.trim().is_empty(), "model scene selector is empty");
+    }
+
+    for component in asset_path.split('/') {
         ensure!(
-            matches!(component, Component::Normal(_)),
-            "model paths cannot contain parent, root, or prefix components"
+            !component.is_empty() && component != "." && component != "..",
+            "model paths cannot contain empty, current-directory, or parent-directory components"
+        );
+        ensure!(
+            !component.contains(':'),
+            "model paths cannot contain platform drive or URI prefixes"
         );
     }
 
@@ -204,7 +269,7 @@ mod tests {
     use crate::config::RuntimeConfig;
 
     #[test]
-    fn checked_in_data_and_world_are_valid() {
+    fn checked_in_data_and_world_are_valid_without_reading_user_save_data() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let config = RuntimeConfig::load(
             root.to_path_buf(),
@@ -216,6 +281,9 @@ mod tests {
 
         assert_eq!(config.world.id, "sandbox");
         assert_eq!(config.world.objects.len(), 5);
-        assert!(config.persisted_state.bodies.is_empty());
+        assert_eq!(
+            config.world.objects[1].definition,
+            config.world.objects[2].definition
+        );
     }
 }

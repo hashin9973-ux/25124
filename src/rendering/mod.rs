@@ -11,12 +11,18 @@ impl Plugin for RenderingPlugin {
 }
 
 fn setup_key_light(mut commands: Commands, config: Res<RuntimeConfig>) {
+    let rotation = config.engine.rendering.key_light_rotation_degrees_xyz;
     commands.spawn((
         DirectionalLight {
             illuminance: config.engine.rendering.key_light_illuminance_lux,
             shadows_enabled: config.engine.rendering.shadows_enabled,
             ..default()
         },
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.85, -0.55, 0.0)),
+        Transform::from_rotation(Quat::from_euler(
+            EulerRot::XYZ,
+            rotation[0].to_radians(),
+            rotation[1].to_radians(),
+            rotation[2].to_radians(),
+        )),
     ));
 }

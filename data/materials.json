@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "materials": {
     "concrete": {
       "density_kg_m3": 2400.0,
