@@ -2,7 +2,10 @@ mod catalog;
 mod menu;
 mod water;
 
-pub use catalog::{ActiveWorld, CharacterStudioWorkspace, EditorProjectRoot, WorldCatalog};
+pub use catalog::{
+    ActiveWorld, CharacterRigDefinition, CharacterRigJoint, CharacterRigSegment,
+    CharacterStudioWorkspace, EditorProjectRoot, WorldCatalog, WorldKind,
+};
 use bevy::prelude::*;
 
 use crate::{config::RuntimeConfig, persistence::WorldStateFile};

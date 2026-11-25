@@ -65,6 +65,42 @@ pub struct ActiveWorld {
     pub outputs_dir: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct CharacterRigDefinition {
+    pub schema_version: u32,
+    pub id: String,
+    pub species: String,
+    pub segments: Vec<CharacterRigSegment>,
+    pub joints: Vec<CharacterRigJoint>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CharacterRigSegment {
+    pub id: String,
+    pub parent: Option<String>,
+    pub shape: String,
+    pub radius_m: Option<f32>,
+    pub length_m: Option<f32>,
+    pub half_extents_m: Option<[f32; 3]>,
+    pub material: String,
+    pub local_center_m: [f32; 3],
+    #[serde(default)]
+    pub local_rotation_degrees_xyz: [f32; 3],
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CharacterRigJoint {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub joint_type: String,
+    pub parent: String,
+    pub child: String,
+    pub anchor_parent_m: [f32; 3],
+    pub anchor_child_m: [f32; 3],
+    pub axis_local: Option<[f32; 3]>,
+    pub angular_limits_degrees: Option<Vec<[f32; 2]>>,
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct CharacterStudioWorkspace {
     pub schema_version: u32,
@@ -76,6 +112,7 @@ pub struct CharacterStudioWorkspace {
     pub tool_catalog_path: String,
     pub output_directories: Vec<String>,
     pub species: Vec<Value>,
+    pub rigs: Vec<CharacterRigDefinition>,
     pub action_sets: Vec<Value>,
     pub tool_catalog: Value,
 }
@@ -172,7 +209,13 @@ impl CharacterStudioWorkspace {
 
         let mut species_ids = HashSet::new();
         let mut species_documents = Vec::with_capacity(species_index.species.len());
+        let mut rig_documents = Vec::with_capacity(species_index.species.len());
         let mut rig_ids = HashMap::<String, (HashSet<String>, HashSet<String>)>::new();
+        let materials_document: Value = read_json(&data_dir.join("materials.json"))?;
+        let physical_materials = materials_document
+            .get("materials")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("world material file has no materials object"))?;
 
         for reference in &species_index.species {
             ensure!(
@@ -215,8 +258,28 @@ impl CharacterStudioWorkspace {
             let segment_ids = collect_ids(&rig, "segments", &rig_path)?;
             let joint_ids = collect_ids(&rig, "joints", &rig_path)?;
             validate_rig(&rig, &segment_ids, &joint_ids, &rig_path)?;
+
+            for segment in rig.get("segments").and_then(Value::as_array).into_iter().flatten() {
+                let material_id = segment
+                    .get("material")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "rig segment in '{}' is missing a material id",
+                        rig_path.display()
+                    ))?;
+                ensure!(
+                    physical_materials.contains_key(material_id),
+                    "rig '{}' references unknown physical material '{}'",
+                    rig_path.display(),
+                    material_id
+                );
+            }
+
+            let typed_rig: CharacterRigDefinition = serde_json::from_value(rig.clone())
+                .with_context(|| format!("invalid typed rig data in '{}'", rig_path.display()))?;
             rig_ids.insert(reference.id.clone(), (segment_ids, joint_ids));
             species_documents.push(species);
+            rig_documents.push(typed_rig);
         }
 
         let mut action_set_ids = HashSet::new();
@@ -264,6 +327,7 @@ impl CharacterStudioWorkspace {
             tool_catalog_path: workspace.tool_catalog,
             output_directories: workspace.output_directories,
             species: species_documents,
+            rigs: rig_documents,
             action_sets: action_documents,
             tool_catalog,
         })
@@ -326,21 +390,24 @@ fn validate_rig(
         .get("segments")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("rig '{}' has no segments array", path.display()))?;
+    let mut parent_by_segment = HashMap::<String, Option<String>>::new();
+    let mut root_count = 0_usize;
 
     for segment in segments {
         let id = segment.get("id").and_then(Value::as_str).unwrap_or_default();
 
-        if let Some(parent) = segment.get("parent").filter(|value| !value.is_null()) {
-            let parent = parent.as_str().ok_or_else(|| {
-                anyhow::anyhow!("segment '{id}' in '{}' has a non-string parent", path.display())
-            })?;
+        let parent = segment.get("parent").and_then(Value::as_str).map(str::to_owned);
+        if let Some(parent_id) = &parent {
             ensure!(
-                segment_ids.contains(parent),
-                "segment '{id}' in '{}' references unknown parent '{parent}'",
+                segment_ids.contains(parent_id),
+                "segment '{id}' in '{}' references unknown parent '{parent_id}'",
                 path.display()
             );
-            ensure!(parent != id, "segment '{id}' cannot parent itself");
+            ensure!(parent_id != id, "segment '{id}' cannot parent itself");
+        } else {
+            root_count += 1;
         }
+        parent_by_segment.insert(id.to_owned(), parent);
 
         validate_vec3(
             segment.get("local_center_m"),
@@ -373,11 +440,31 @@ fn validate_rig(
         }
     }
 
+    ensure!(
+        root_count == 1,
+        "rig '{}' must have exactly one root segment, found {root_count}",
+        path.display()
+    );
+    for segment_id in segment_ids {
+        let mut visited = HashSet::new();
+        let mut current = Some(segment_id.as_str());
+        while let Some(id) = current {
+            ensure!(
+                visited.insert(id.to_owned()),
+                "rig '{}' contains a parent cycle at segment '{}'",
+                path.display(),
+                id
+            );
+            current = parent_by_segment.get(id).and_then(Option::as_deref);
+        }
+    }
+
     let joints = rig
         .get("joints")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("rig '{}' has no joints array", path.display()))?;
 
+    let mut jointed_children = HashSet::new();
     for joint in joints {
         let id = joint.get("id").and_then(Value::as_str).unwrap_or_default();
         let parent = joint
@@ -394,10 +481,20 @@ fn validate_rig(
             path.display()
         );
         ensure!(parent != child, "joint '{id}' cannot connect a segment to itself");
+        ensure!(
+            parent_by_segment.get(child).and_then(Option::as_deref) == Some(parent),
+            "joint '{id}' in '{}' must connect the declared parent to its child",
+            path.display()
+        );
+        ensure!(
+            jointed_children.insert(child.to_owned()),
+            "rig '{}' contains more than one joint for child segment '{child}'",
+            path.display()
+        );
 
         let joint_type = joint.get("type").and_then(Value::as_str).unwrap_or_default();
         ensure!(
-            matches!(joint_type, "ball" | "hinge" | "fixed" | "spherical"),
+            matches!(joint_type, "ball" | "hinge" | "spherical"),
             "joint '{id}' in '{}' has unsupported type '{joint_type}'",
             path.display()
         );
@@ -430,6 +527,12 @@ fn validate_rig(
             let ranges = limits.as_array().ok_or_else(|| {
                 anyhow::anyhow!("joint '{id}' angular limits in '{}' must be an array", path.display())
             })?;
+            let expected_axes = if joint_type == "hinge" { 1 } else { 3 };
+            ensure!(
+                ranges.len() == expected_axes,
+                "joint '{id}' in '{}' requires {expected_axes} angular limit range(s)",
+                path.display()
+            );
             ensure!(
                 ranges.iter().all(|range| {
                     range.as_array().is_some_and(|pair| {
@@ -452,6 +555,11 @@ fn validate_rig(
     ensure!(
         joint_ids.len() == joints.len(),
         "rig '{}' contains inconsistent joint ids",
+        path.display()
+    );
+    ensure!(
+        jointed_children.len() + 1 == segments.len(),
+        "rig '{}' must define one joint for every non-root segment",
         path.display()
     );
     Ok(())
@@ -1008,6 +1116,9 @@ mod tests {
         assert_eq!(workspace.id, "character_studio");
         assert_eq!(workspace.display_name, "Character Studio");
         assert_eq!(workspace.species.len(), 1);
+        assert_eq!(workspace.rigs.len(), 1);
+        assert_eq!(workspace.rigs[0].segments.len(), 16);
+        assert_eq!(workspace.rigs[0].joints.len(), 15);
         assert_eq!(workspace.action_sets.len(), 1);
         assert!(
             workspace

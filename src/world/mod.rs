@@ -1,3 +1,4 @@
+mod character_preview;
 mod spawn;
 
 use bevy::prelude::*;

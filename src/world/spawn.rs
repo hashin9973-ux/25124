@@ -8,6 +8,8 @@ use avian3d::prelude::{
 use bevy::{gltf::prelude::GltfAssetLabel, prelude::*};
 
 use crate::{
+    editor::{ActiveWorld, CharacterStudioWorkspace, WorldKind},
+    world::character_preview,
     config::{
         AlphaMode, BodyType, CcdFilterDefinition, ColliderShape, ComponentDefinition,
         RuntimeConfig, SweepModeDefinition, VisualDefinition,
@@ -20,6 +22,8 @@ pub(super) fn spawn_world(
     mut commands: Commands,
     config: Res<RuntimeConfig>,
     world_state: Res<WorldStateFile>,
+    active_world: Res<ActiveWorld>,
+    studio_workspace: Res<CharacterStudioWorkspace>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -128,8 +132,25 @@ pub(super) fn spawn_world(
         );
     }
 
+    if active_world.kind == Some(WorldKind::CharacterStudio) {
+        if let Some(rig) = studio_workspace.rigs.first() {
+            if let Err(error) = character_preview::spawn_rig(
+                &mut commands,
+                rig,
+                &config,
+                &mut meshes,
+                &mut materials,
+                Vec3::new(-4.5, 0.0, 1.0),
+            ) {
+                error!("Could not spawn species preview '{}': {error:#}", rig.species);
+            }
+        } else {
+            warn!("Character Studio has no validated species rig to preview");
+        }
+    }
+
     info!(
-        "Loaded world '{}' with {} instances from {} component definitions",
+        "Loaded world '{}' with {} manifest instances from {} component definitions",
         config.world.name,
         config.world.objects.len(),
         config.components.definitions.len()
