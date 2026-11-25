@@ -244,6 +244,33 @@ impl CharacterStudioWorkspace {
             tool_catalog_path.display()
         );
 
+        let components_path = data_dir.join("components.json");
+        let components_document: Value = read_json(&components_path)?;
+        let component_definitions = components_document
+            .get("definitions")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!(
+                "world component file '{}' has no definitions object",
+                components_path.display()
+            ))?;
+        let mut world_surface_tags = HashSet::new();
+        for (definition_id, definition) in component_definitions {
+            if let Some(tags) = definition.get("tags").and_then(Value::as_array) {
+                for tag in tags {
+                    let tag = tag.as_str().ok_or_else(|| anyhow::anyhow!(
+                        "component definition '{definition_id}' in '{}' has a non-string tag",
+                        components_path.display()
+                    ))?;
+                    ensure!(
+                        !tag.trim().is_empty(),
+                        "component definition '{definition_id}' in '{}' has an empty tag",
+                        components_path.display()
+                    );
+                    world_surface_tags.insert(tag.to_owned());
+                }
+            }
+        }
+
         let mut species_ids = HashSet::new();
         let mut species_documents = Vec::with_capacity(species_index.species.len());
         let mut rig_documents = Vec::with_capacity(species_index.species.len());
@@ -352,7 +379,13 @@ impl CharacterStudioWorkspace {
             let (segments, joints) = rig_ids
                 .get(&reference.species)
                 .expect("species index and rig ids were loaded together");
-            validate_action_set(&action_set, segments, joints, &action_path)?;
+            validate_action_set(
+                &action_set,
+                segments,
+                joints,
+                &world_surface_tags,
+                &action_path,
+            )?;
             action_documents.push(action_set);
         }
 
@@ -652,6 +685,7 @@ fn validate_action_set(
     action_set: &Value,
     segments: &HashSet<String>,
     joints: &HashSet<String>,
+    world_surface_tags: &HashSet<String>,
     path: &Path,
 ) -> Result<()> {
     let actions = action_set
@@ -671,39 +705,107 @@ fn validate_action_set(
             path.display()
         );
 
-        for key in ["triggers", "conditions"] {
-            if let Some(entries) = action.get(key).and_then(Value::as_array) {
-                for entry in entries {
-                    let kind = entry.get("kind").and_then(Value::as_str).unwrap_or_default();
-                    match kind {
-                        "collision" => validate_reference(entry, "segment", segments, "segment", path)?,
-                        "surface_contact" => {
-                            let segment_list = entry
-                                .get("segments")
-                                .and_then(Value::as_array)
-                                .ok_or_else(|| anyhow::anyhow!("surface contact in '{}' has no segments", path.display()))?;
-                            for segment in segment_list {
-                                let segment_id = segment.as_str().ok_or_else(|| {
-                                    anyhow::anyhow!("surface contact in '{}' has a non-string segment id", path.display())
-                                })?;
-                                ensure!(
-                                    segments.contains(segment_id),
-                                    "surface contact in '{}' references unknown segment '{segment_id}'",
-                                    path.display()
-                                );
-                            }
-                        }
-                        "joint_angle_threshold" => validate_reference(entry, "joint", joints, "joint", path)?,
-                        "key_held" => ensure!(
-                            entry.get("key").and_then(Value::as_str).is_some(),
-                            "key trigger in '{}' has no key",
-                            path.display()
-                        ),
-                        _ => bail!(
-                            "unsupported action trigger or condition kind '{kind}' in '{}'",
-                            path.display()
-                        ),
+        let activation = action.get("activation").and_then(Value::as_str).unwrap_or_default();
+        ensure!(
+            matches!(activation, "while_trigger_and_conditions_hold" | "on_trigger_edge"),
+            "action '{id}' has unsupported activation mode '{activation}'"
+        );
+
+        let triggers = action
+            .get("triggers")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("action '{id}' in '{}' has no triggers array", path.display()))?;
+        ensure!(!triggers.is_empty(), "action '{id}' in '{}' has no triggers", path.display());
+
+        for trigger in triggers {
+            let kind = trigger.get("kind").and_then(Value::as_str).unwrap_or_default();
+            match kind {
+                "key_pressed" | "key_held" => {
+                    let key = trigger
+                        .get("key")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("key trigger in '{}' has no key", path.display()))?;
+                    ensure!(!key.trim().is_empty(), "action '{id}' has an empty key binding");
+                }
+                "collision" => {
+                    validate_reference(trigger, "segment", segments, "segment", path)?;
+                    validate_surface_tag_list(trigger, "other_tags", world_surface_tags, path)?;
+                    validate_finite_scalar(
+                        trigger,
+                        "minimum_relative_speed_m_s",
+                        0.0,
+                        f64::MAX,
+                        path,
+                    )?;
+                }
+                _ => bail!(
+                    "unsupported action trigger kind '{kind}' in '{}'",
+                    path.display()
+                ),
+            }
+        }
+
+        if let Some(conditions) = action.get("conditions").and_then(Value::as_array) {
+            for condition in conditions {
+                let kind = condition.get("kind").and_then(Value::as_str).unwrap_or_default();
+                match kind {
+                    "surface_contact" => {
+                        validate_segment_list(condition, "segments", segments, path)?;
+                        validate_surface_tag_list(condition, "surface_tags", world_surface_tags, path)?;
+                        validate_finite_scalar(condition, "minimum_normal_dot", -1.0, 1.0, path)?;
                     }
+                    "surface_geometry" => {
+                        validate_segment_list(condition, "segments", segments, path)?;
+                        validate_surface_tag_list(condition, "surface_tags", world_surface_tags, path)?;
+                        let geometry = condition
+                            .get("geometry")
+                            .ok_or_else(|| anyhow::anyhow!(
+                                "surface geometry condition in '{}' has no geometry object",
+                                path.display()
+                            ))?;
+                        let geometry_kind = geometry
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        ensure!(
+                            geometry_kind == "plane",
+                            "surface geometry condition in '{}' currently supports only plane geometry",
+                            path.display()
+                        );
+                        let normal = validate_vec3(
+                            geometry.get("normal_world"),
+                            "surface geometry plane normal_world",
+                            path,
+                        )?;
+                        ensure!(
+                            normal.iter().map(|value| value * value).sum::<f64>() > 1.0e-12,
+                            "surface geometry plane in '{}' has a zero-length normal",
+                            path.display()
+                        );
+                        validate_finite_scalar(geometry, "offset_m", -f64::MAX, f64::MAX, path)?;
+                        validate_finite_scalar(condition, "maximum_slope_degrees", 0.0, 90.0, path)?;
+                    }
+                    "joint_angle_threshold" => {
+                        validate_reference(condition, "joint", joints, "joint", path)?;
+                        validate_non_zero_axis(condition, "axis_local", path)?;
+                        validate_comparison(condition, path)?;
+                        validate_finite_scalar(condition, "angle_degrees", 0.0, 180.0, path)?;
+                    }
+                    "segment_rotation_threshold" => {
+                        validate_reference(condition, "segment", segments, "segment", path)?;
+                        validate_non_zero_axis(condition, "axis_local", path)?;
+                        validate_vec3(
+                            condition.get("reference_rotation_degrees_xyz"),
+                            "segment rotation reference_rotation_degrees_xyz",
+                            path,
+                        )?;
+                        validate_comparison(condition, path)?;
+                        validate_finite_scalar(condition, "angle_degrees", 0.0, 180.0, path)?;
+                    }
+                    _ => bail!(
+                        "unsupported action condition kind '{kind}' in '{}'",
+                        path.display()
+                    ),
                 }
             }
         }
@@ -712,23 +814,45 @@ fn validate_action_set(
             .get("actuators")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("action '{id}' in '{}' has no actuators array", path.display()))?;
+        ensure!(!actuators.is_empty(), "action '{id}' in '{}' has no actuators", path.display());
+
         for actuator in actuators {
             validate_reference(actuator, "joint", joints, "actuator joint", path)?;
+            validate_non_zero_axis(actuator, "axis_local", path)?;
             let kind = actuator.get("kind").and_then(Value::as_str).unwrap_or_default();
-            ensure!(
-                matches!(kind, "joint_torque" | "joint_angular_velocity_target"),
-                "unsupported actuator kind '{kind}' in '{}'",
-                path.display()
-            );
-            let torque_limit = actuator
-                .get("torque_limit_nm")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| anyhow::anyhow!("actuator in '{}' has no numeric torque limit", path.display()))?;
-            ensure!(
-                torque_limit.is_finite() && torque_limit > 0.0,
-                "actuator torque limit in '{}' must be finite and positive",
-                path.display()
-            );
+            let torque_limit = validate_finite_scalar(
+                actuator,
+                "torque_limit_nm",
+                f64::MIN_POSITIVE,
+                f64::MAX,
+                path,
+            )?;
+            match kind {
+                "joint_torque" => {
+                    let torque = validate_finite_scalar(
+                        actuator,
+                        "torque_nm",
+                        -f64::MAX,
+                        f64::MAX,
+                        path,
+                    )?;
+                    ensure!(
+                        torque.abs() <= torque_limit,
+                        "action '{id}' torque command exceeds torque_limit_nm in '{}'",
+                        path.display()
+                    );
+                }
+                "joint_angular_velocity_target" => {
+                    validate_finite_scalar(
+                        actuator,
+                        "target_rad_s",
+                        -f64::MAX,
+                        f64::MAX,
+                        path,
+                    )?;
+                }
+                _ => bail!("unsupported actuator kind '{kind}' in '{}'", path.display()),
+            }
         }
     }
 
@@ -747,7 +871,105 @@ fn validate_action_set(
             path.display()
         );
     }
+    ensure!(
+        policy.get("forces_and_joint_motors_only").and_then(Value::as_bool) == Some(true),
+        "action set '{}' must restrict actuation to force/torque and joint-motor outputs",
+        path.display()
+    );
     Ok(())
+}
+
+fn validate_segment_list(
+    document: &Value,
+    key: &str,
+    valid_ids: &HashSet<String>,
+    path: &Path,
+) -> Result<()> {
+    let entries = document
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("segment list '{key}' in '{}' is missing", path.display()))?;
+    ensure!(!entries.is_empty(), "segment list '{key}' in '{}' cannot be empty", path.display());
+
+    for entry in entries {
+        let id = entry
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("segment list '{key}' in '{}' contains a non-string id", path.display()))?;
+        ensure!(
+            valid_ids.contains(id),
+            "unknown segment '{id}' in segment list '{key}' in '{}'",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_surface_tag_list(
+    document: &Value,
+    key: &str,
+    valid_tags: &HashSet<String>,
+    path: &Path,
+) -> Result<()> {
+    let entries = document
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("'{key}' in '{}' must be an array", path.display()))?;
+    ensure!(!entries.is_empty(), "'{key}' in '{}' cannot be empty", path.display());
+
+    for entry in entries {
+        let tag = entry
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("'{key}' in '{}' contains a non-string tag", path.display()))?;
+        ensure!(!tag.trim().is_empty(), "'{key}' in '{}' contains an empty tag", path.display());
+        ensure!(
+            valid_tags.contains(tag),
+            "unknown surface tag '{tag}' in '{key}' in '{}'",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn validate_non_zero_axis(document: &Value, key: &str, path: &Path) -> Result<()> {
+    let axis = validate_vec3(document.get(key), &format!("'{key}' axis"), path)?;
+    ensure!(
+        axis.iter().map(|value| value * value).sum::<f64>() > 1.0e-12,
+        "'{key}' in '{}' must not be a zero vector",
+        path.display()
+    );
+    Ok(())
+}
+
+fn validate_comparison(document: &Value, path: &Path) -> Result<()> {
+    let comparison = document
+        .get("comparison")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    ensure!(
+        matches!(comparison, "less_than" | "greater_than"),
+        "unsupported threshold comparison '{comparison}' in '{}'",
+        path.display()
+    );
+    Ok(())
+}
+
+fn validate_finite_scalar(
+    document: &Value,
+    key: &str,
+    minimum: f64,
+    maximum: f64,
+    path: &Path,
+) -> Result<f64> {
+    let value = document
+        .get(key)
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow::anyhow!("'{key}' in '{}' must be numeric", path.display()))?;
+    ensure!(
+        value.is_finite() && value >= minimum && value <= maximum,
+        "'{key}' in '{}' must be finite and within [{minimum}, {maximum}]",
+        path.display()
+    );
+    Ok(value)
 }
 
 fn validate_reference(
@@ -1198,10 +1420,30 @@ mod tests {
         let joints = rig.joints.iter().map(|joint| joint.id.clone()).collect::<HashSet<_>>();
         let action_set = &workspace.action_sets[0];
 
+        let component_data: Value = read_json(
+            &root.join("worlds/character_studio/data/components.json")
+        )
+        .expect("world component definitions should load");
+        let mut world_surface_tags = HashSet::new();
+        for definition in component_data["definitions"]
+            .as_object()
+            .expect("component definitions object")
+            .values()
+        {
+            if let Some(tags) = definition.get("tags").and_then(Value::as_array) {
+                for tag in tags {
+                    world_surface_tags.insert(
+                        tag.as_str().expect("component surface tags are strings").to_owned()
+                    );
+                }
+            }
+        }
+
         validate_action_set(
             action_set,
             &segments,
             &joints,
+            &world_surface_tags,
             &root.join("worlds/character_studio/outputs/actions/human.locomotion.actions.json"),
         )
         .expect("sample action contract should validate");
@@ -1240,10 +1482,26 @@ mod tests {
                 &invalid,
                 &segments,
                 &joints,
+                &world_surface_tags,
                 &root.join("invalid-action.json"),
             )
             .is_err(),
             "action validator must reject torque commands above their authored limit"
+        );
+
+        let mut invalid_tag = action_set.clone();
+        invalid_tag["actions"][0]["conditions"][0]["surface_tags"][0] =
+            serde_json::json!("missing_surface_tag");
+        assert!(
+            validate_action_set(
+                &invalid_tag,
+                &segments,
+                &joints,
+                &world_surface_tags,
+                &root.join("invalid-surface-tag.json"),
+            )
+            .is_err(),
+            "action validator must reject surface tags not defined by the world"
         );
     }
 
