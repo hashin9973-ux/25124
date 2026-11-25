@@ -199,13 +199,15 @@ pub(super) fn spawn_rig(
                 })?;
             let entity = spawn_segment(
                 commands,
-                rig,
-                segment,
-                shape,
-                physical_material,
-                mesh,
-                preview_material.clone(),
-                world_transform,
+                SegmentSpawnContext {
+                    rig,
+                    segment,
+                    shape,
+                    material: physical_material,
+                    mesh,
+                    visual_material: preview_material.clone(),
+                    transform: world_transform,
+                },
             )?;
 
             body_entities.insert(segment.id.clone(), entity);
@@ -233,16 +235,30 @@ pub(super) fn spawn_rig(
     Ok(())
 }
 
-fn spawn_segment(
-    commands: &mut Commands,
-    rig: &CharacterRigDefinition,
-    segment: &CharacterRigSegment,
+struct SegmentSpawnContext<'a> {
+    rig: &'a CharacterRigDefinition,
+    segment: &'a CharacterRigSegment,
     shape: PreviewShape,
-    material: &MaterialDefinition,
+    material: &'a MaterialDefinition,
     mesh: Handle<Mesh>,
     visual_material: Handle<StandardMaterial>,
     transform: Transform,
+}
+
+fn spawn_segment(
+    commands: &mut Commands,
+    context: SegmentSpawnContext<'_>,
 ) -> Result<Entity> {
+    let SegmentSpawnContext {
+        rig,
+        segment,
+        shape,
+        material,
+        mesh,
+        visual_material,
+        transform,
+    } = context;
+
     ensure!(
         material.density_kg_m3.is_finite() && material.density_kg_m3 > 0.0,
         "segment '{}' has invalid material density",

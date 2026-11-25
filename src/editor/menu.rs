@@ -79,6 +79,7 @@ pub(super) fn spawn_world_browser(
     build_world_browser_scene(&mut commands, &catalog, page.0, &mut meshes, &mut materials);
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy injects separate resources and a scene query into this system.
 pub(super) fn refresh_world_browser(
     mut commands: Commands,
     catalog: Res<WorldCatalog>,

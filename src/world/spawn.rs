@@ -17,6 +17,7 @@ use crate::{
     world::{WorldInstanceEntity, WorldSurfaceTags, character_preview},
 };
 
+#[allow(clippy::too_many_arguments)] // The system keeps its resource dependencies explicit for Bevy's ECS scheduler.
 pub(super) fn spawn_world(
     mut commands: Commands,
     config: Res<RuntimeConfig>,
@@ -123,12 +124,14 @@ pub(super) fn spawn_world(
         add_visual(
             &mut entity,
             definition,
-            &asset_server,
-            &asset_prefix,
-            &mut meshes,
-            &mut materials,
-            &mut mesh_cache,
-            &mut material_cache,
+            VisualBuildContext {
+                asset_server: &asset_server,
+                asset_prefix: &asset_prefix,
+                meshes: &mut meshes,
+                materials: &mut materials,
+                mesh_cache: &mut mesh_cache,
+                material_cache: &mut material_cache,
+            },
         );
     }
 
@@ -162,16 +165,29 @@ pub(super) fn spawn_world(
     );
 }
 
+struct VisualBuildContext<'a> {
+    asset_server: &'a AssetServer,
+    asset_prefix: &'a Path,
+    meshes: &'a mut Assets<Mesh>,
+    materials: &'a mut Assets<StandardMaterial>,
+    mesh_cache: &'a mut HashMap<MeshKey, Handle<Mesh>>,
+    material_cache: &'a mut HashMap<VisualMaterialKey, Handle<StandardMaterial>>,
+}
+
 fn add_visual(
     entity: &mut EntityCommands,
     definition: &ComponentDefinition,
-    asset_server: &AssetServer,
-    asset_prefix: &Path,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    mesh_cache: &mut HashMap<MeshKey, Handle<Mesh>>,
-    material_cache: &mut HashMap<VisualMaterialKey, Handle<StandardMaterial>>,
+    assets: VisualBuildContext<'_>,
 ) {
+    let VisualBuildContext {
+        asset_server,
+        asset_prefix,
+        meshes,
+        materials,
+        mesh_cache,
+        material_cache,
+    } = assets;
+
     if let Some(model_path) = &definition.visual.model {
         // Validation guarantees an optional selector has the form "#SceneN".
         // Unqualified glTF references intentionally select the first scene.

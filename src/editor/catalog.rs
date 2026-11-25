@@ -1263,6 +1263,7 @@ fn safe_project_path(root: &Path, relative: &str) -> Result<PathBuf> {
     Ok(canonical_candidate)
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy injects these independent ECS resources directly into the system.
 pub(super) fn process_menu_command(
     mut pending: ResMut<PendingMenuCommand>,
     root: Res<EditorProjectRoot>,
@@ -1294,17 +1295,17 @@ pub(super) fn process_menu_command(
         MenuAction::LoadWorld(id) => {
             let selected = catalog.worlds.iter().find(|world| world.id == id).cloned();
             match selected {
-                Some(world) => open_world(
-                    &root.0,
-                    &world,
-                    &mut runtime_config,
-                    &mut state_file,
-                    &mut save_target,
-                    &mut gravity,
-                    &mut active_world,
-                    &mut studio_workspace,
-                    &mut next_screen,
-                ),
+                Some(world) => open_world(WorldOpenContext {
+                    project_root: &root.0,
+                    entry: &world,
+                    runtime_config: &mut runtime_config,
+                    state_file: &mut state_file,
+                    save_target: &mut save_target,
+                    gravity: &mut gravity,
+                    active_world: &mut active_world,
+                    studio_workspace: &mut studio_workspace,
+                    next_screen: &mut next_screen,
+                }),
                 None => bail!("world id '{id}' is not present in the catalog"),
             }
         }
@@ -1326,17 +1327,17 @@ pub(super) fn process_menu_command(
         }
         MenuAction::CreateWorld => {
             create_empty_world(&root.0, &mut catalog).and_then(|world| {
-                open_world(
-                    &root.0,
-                    &world,
-                    &mut runtime_config,
-                    &mut state_file,
-                    &mut save_target,
-                    &mut gravity,
-                    &mut active_world,
-                    &mut studio_workspace,
-                    &mut next_screen,
-                )
+                open_world(WorldOpenContext {
+                    project_root: &root.0,
+                    entry: &world,
+                    runtime_config: &mut runtime_config,
+                    state_file: &mut state_file,
+                    save_target: &mut save_target,
+                    gravity: &mut gravity,
+                    active_world: &mut active_world,
+                    studio_workspace: &mut studio_workspace,
+                    next_screen: &mut next_screen,
+                })
             })
         }
     };
@@ -1346,17 +1347,30 @@ pub(super) fn process_menu_command(
     }
 }
 
-fn open_world(
-    project_root: &Path,
-    entry: &WorldCatalogEntry,
-    runtime_config: &mut RuntimeConfig,
-    state_file: &mut WorldStateFile,
-    save_target: &mut WorldSaveTarget,
-    gravity: &mut Gravity,
-    active_world: &mut ActiveWorld,
-    studio_workspace: &mut CharacterStudioWorkspace,
-    next_screen: &mut NextState<EditorScreen>,
-) -> Result<()> {
+struct WorldOpenContext<'a> {
+    project_root: &'a Path,
+    entry: &'a WorldCatalogEntry,
+    runtime_config: &'a mut RuntimeConfig,
+    state_file: &'a mut WorldStateFile,
+    save_target: &'a mut WorldSaveTarget,
+    gravity: &'a mut Gravity,
+    active_world: &'a mut ActiveWorld,
+    studio_workspace: &'a mut CharacterStudioWorkspace,
+    next_screen: &'a mut NextState<EditorScreen>,
+}
+
+fn open_world(context: WorldOpenContext<'_>) -> Result<()> {
+    let WorldOpenContext {
+        project_root,
+        entry,
+        runtime_config,
+        state_file,
+        save_target,
+        gravity,
+        active_world,
+        studio_workspace,
+        next_screen,
+    } = context;
     let manifest = safe_project_path(project_root, &entry.manifest)?;
     let data_dir = safe_project_path(project_root, &entry.data)?;
     let assets_dir = safe_project_path(project_root, &entry.assets)?;
