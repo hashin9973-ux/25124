@@ -129,6 +129,18 @@ jobs:
           if ($modelingSettings.schema_version -ne 1) {
             throw "Unsupported Character Studio modeling settings schema"
           }
+          $undoHistorySetting = $modelingSettings.edit_history.maximum_undo_steps
+          if ($null -eq $undoHistorySetting) {
+            $undoHistoryLimit = 64
+          } else {
+            if ($undoHistorySetting -isnot [int] -and $undoHistorySetting -isnot [long]) {
+              throw "Character Studio undo history must be an integer"
+            }
+            $undoHistoryLimit = [int]$undoHistorySetting
+          }
+          if ($undoHistoryLimit -lt 0 -or $undoHistoryLimit -gt 256) {
+            throw "Character Studio undo history must be between 0 and 256 steps"
+          }
           $planeNormal = @($modelingSettings.construction_plane.normal_world | ForEach-Object { [double]$_ })
           $normalSquared = 0.0
           $planeNormalValid = $planeNormal.Count -eq 3

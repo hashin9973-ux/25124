@@ -77,7 +77,7 @@ The menu opens first. Choose Worlds and select a catalog entry. In a loaded worl
 - Space / Left Ctrl: camera up/down
 - Left Shift: sprint; Shift+click in Character Studio adds/removes mesh elements from the selection
 - Mouse: look; left click in Character Studio selects elements or places vertices in Vertex mode
-- Character Studio: 1 / 2 / 3 select Vertex / Edge / Face mode; arrow keys move selected topology by one configured grid step; Page Up/Down move along the construction-plane normal; E creates an edge; F creates a face; Delete removes topology with dependent-face cleanup; Tab cycles mesh documents
+- Character Studio: 1 / 2 / 3 select Vertex / Edge / Face mode; arrow keys move selected topology by one configured grid step; Page Up/Down move along the construction-plane normal; E creates an edge; F creates a face; Delete removes topology with dependent-face cleanup; Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes mesh edits; Tab cycles mesh documents. Undo history is per mesh document, session-local, and defaults to 64 steps. Configure `edit_history.maximum_undo_steps` in the world's modeling settings (0 disables history; the maximum is 256). Mesh documents themselves are saved after each edit; the undo stack is cleared when leaving Character Studio.
 - F5: save the active world's dynamic body state
 - Escape: return to the main menu
 

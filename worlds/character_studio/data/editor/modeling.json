@@ -1,5 +1,8 @@
 {
   "schema_version": 1,
+  "edit_history": {
+    "maximum_undo_steps": 64
+  },
   "coordinate_system": {
     "handedness": "right",
     "up_axis": "Y",
@@ -62,7 +65,8 @@
       "extrude_face",
       "construction_plane_grid",
       "delete_elements",
-      "viewport_grid_step_translation"
+      "viewport_grid_step_translation",
+      "viewport_undo_redo"
     ]
   },
   "symmetry": {

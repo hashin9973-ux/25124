@@ -1,4 +1,7 @@
-use avian3d::prelude::{Gravity, PhysicsPlugins, SolverConfig, SubstepCount};
+use avian3d::{
+    dynamics::solver::SolverConfig,
+    prelude::{Gravity, PhysicsPlugins, SubstepCount},
+};
 use bevy::prelude::*;
 
 use crate::{

@@ -1,7 +1,9 @@
 use bevy::prelude::*;
+use bevy::sprite::Anchor;
 
 use super::{
-    MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE, WorldBrowserPage, WorldCatalog,
+    MenuAction, MenuSceneDirty, PendingMenuCommand, WORLD_PAGE_SIZE, WorldBrowserPage,
+    WorldCatalog,
     water::{RippleField, spawn_water},
 };
 
@@ -189,7 +191,6 @@ fn build_world_browser_scene(
         MenuAction::CreateWorld,
         camera_rotation(),
     );
-
 }
 
 fn spawn_base_scene(
@@ -254,7 +255,7 @@ fn spawn_heading(
                 Text2d::new(text),
                 TextFont::from_font_size(font_size),
                 TextColor(Color::BLACK),
-                Anchor::Center,
+                Anchor::CENTER,
                 Transform::from_translation(offset),
             ));
         }
@@ -262,7 +263,7 @@ fn spawn_heading(
             Text2d::new(text),
             TextFont::from_font_size(font_size),
             TextColor(Color::WHITE),
-            Anchor::Center,
+            Anchor::CENTER,
             Transform::from_xyz(0.0, 0.0, 0.02),
         ));
     });
@@ -322,7 +323,7 @@ fn spawn_callout(
                 Text2d::new(text),
                 TextFont::from_font_size(48.0),
                 TextColor(Color::BLACK),
-                Anchor::Center,
+                Anchor::CENTER,
                 Transform::from_translation(offset),
             ));
         }
@@ -330,7 +331,7 @@ fn spawn_callout(
             Text2d::new(text),
             TextFont::from_font_size(48.0),
             TextColor(Color::WHITE),
-            Anchor::Center,
+            Anchor::CENTER,
             Transform::from_xyz(0.0, 0.0, 0.025),
         ));
     });
@@ -365,10 +366,7 @@ pub(super) fn interact_callouts(
     }
 }
 
-pub(super) fn despawn_menu_scene(
-    mut commands: Commands,
-    entities: Query<Entity, With<MenuScene>>,
-) {
+pub(super) fn despawn_menu_scene(mut commands: Commands, entities: Query<Entity, With<MenuScene>>) {
     for entity in &entities {
         commands.entity(entity).despawn();
     }

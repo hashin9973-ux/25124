@@ -1,23 +1,25 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, ensure};
+use bevy::ecs::change_detection::DetectChanges;
+use bevy::log::{error, warn};
 use bevy::{
     asset::RenderAssetUsages,
     mesh::{Indices, PrimitiveTopology},
-    prelude::*,
+    prelude::{
+        Assets, ButtonInput, Camera, Color, Commands, Component, Entity, Gizmos, GlobalTransform,
+        Isometry3d, KeyCode, Mesh, Mesh3d, MeshMaterial3d, MouseButton, Name, Quat, Query, Res,
+        ResMut, Resource, Single, StandardMaterial, Transform, Vec3, Window, With,
+    },
 };
 
 use crate::{
     camera::FreeFlyCamera,
-    modeling::{
-        MeshDocument, MeshEdge, MeshFace, MeshVertex, save_mesh_document_with_backup,
-    },
+    modeling::{MeshDocument, MeshEdge, MeshFace, MeshVertex, save_mesh_document_with_backup},
     world::WorldInstanceEntity,
 };
 
-use super::{
-    ActiveWorld, CharacterStudioWorkspace, PendingMenuCommand,
-};
+use super::{ActiveWorld, CharacterStudioWorkspace, PendingMenuCommand};
 
 const VERTEX_PICK_RADIUS_M: f32 = 0.075;
 const EDGE_PICK_RADIUS_M: f32 = 0.055;
@@ -47,11 +49,88 @@ pub(super) struct MeshViewportState {
 }
 
 #[derive(Component)]
-struct MeshDocumentSurface;
+pub(super) struct MeshDocumentSurface;
 
 #[derive(Resource, Default)]
 pub(super) struct RenderedMeshSnapshot {
     document_id: Option<String>,
+}
+
+#[derive(Default)]
+struct MeshDocumentEditStack {
+    undo: Vec<MeshDocument>,
+    redo: Vec<MeshDocument>,
+}
+
+#[derive(Resource, Default)]
+pub(super) struct MeshDocumentHistory {
+    documents: HashMap<String, MeshDocumentEditStack>,
+}
+
+impl MeshDocumentHistory {
+    fn record_edit(&mut self, previous: &MeshDocument, maximum_steps: usize) {
+        if maximum_steps == 0 {
+            self.documents.remove(&previous.id);
+            return;
+        }
+
+        let history = self.documents.entry(previous.id.clone()).or_default();
+        history.undo.push(previous.clone());
+        if history.undo.len() > maximum_steps {
+            let excess = history.undo.len() - maximum_steps;
+            history.undo.drain(..excess);
+        }
+        history.redo.clear();
+    }
+
+    fn undo_target(&self, document_id: &str) -> Option<&MeshDocument> {
+        self.documents
+            .get(document_id)
+            .and_then(|history| history.undo.last())
+    }
+
+    fn redo_target(&self, document_id: &str) -> Option<&MeshDocument> {
+        self.documents
+            .get(document_id)
+            .and_then(|history| history.redo.last())
+    }
+
+    fn complete_undo(&mut self, document_id: &str, current: MeshDocument) -> Result<()> {
+        let history = self
+            .documents
+            .get_mut(document_id)
+            .context("mesh edit history disappeared during undo")?;
+        history
+            .undo
+            .pop()
+            .context("mesh edit undo history is empty")?;
+        history.redo.push(current);
+        Ok(())
+    }
+
+    fn complete_redo(
+        &mut self,
+        document_id: &str,
+        current: MeshDocument,
+        maximum_steps: usize,
+    ) -> Result<()> {
+        let history = self
+            .documents
+            .get_mut(document_id)
+            .context("mesh edit history disappeared during redo")?;
+        history
+            .redo
+            .pop()
+            .context("mesh edit redo history is empty")?;
+        if maximum_steps > 0 {
+            history.undo.push(current);
+            if history.undo.len() > maximum_steps {
+                let excess = history.undo.len() - maximum_steps;
+                history.undo.drain(..excess);
+            }
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn begin_interaction_frame(mut state: ResMut<MeshViewportState>) {
@@ -70,17 +149,30 @@ pub(super) fn sync_mesh_surfaces(
     let selected_document_id = state
         .active_document_id
         .as_ref()
-        .filter(|id| workspace.mesh_documents.iter().any(|document| &document.id == *id))
+        .filter(|id| {
+            workspace
+                .mesh_documents
+                .iter()
+                .any(|document| &document.id == *id)
+        })
         .cloned()
-        .or_else(|| workspace.mesh_documents.first().map(|document| document.id.clone()));
+        .or_else(|| {
+            workspace
+                .mesh_documents
+                .first()
+                .map(|document| document.id.clone())
+        });
 
     if !workspace.is_changed() && snapshot.document_id == selected_document_id {
         return;
     }
 
-    let selected_document = selected_document_id
-        .as_deref()
-        .and_then(|id| workspace.mesh_documents.iter().find(|document| document.id == id));
+    let selected_document = selected_document_id.as_deref().and_then(|id| {
+        workspace
+            .mesh_documents
+            .iter()
+            .find(|document| document.id == id)
+    });
 
     for entity in &existing_surfaces {
         commands.entity(entity).despawn();
@@ -93,7 +185,7 @@ pub(super) fn sync_mesh_surfaces(
                     base_color: Color::srgb(0.58, 0.66, 0.76),
                     perceptual_roughness: 0.82,
                     metallic: 0.0,
-                    ..default()
+                    ..Default::default()
                 });
                 commands.spawn((
                     Name::new(format!("Mesh surface: {}", document.id)),
@@ -140,17 +232,14 @@ fn build_surface_mesh(document: &MeshDocument) -> Result<Option<Mesh>> {
     for face in &document.faces {
         let base_index = u32::try_from(positions.len())
             .context("mesh surface contains more vertices than the renderer can index")?;
-        let normal = document.face_normal(face)?.map(|component| component as f32);
+        let normal = document
+            .face_normal(face)?
+            .map(|component| component as f32);
 
         for (corner, vertex_id) in face.vertices.iter().enumerate() {
-            let position = *vertex_positions
-                .get(vertex_id.as_str())
-                .with_context(|| {
-                    format!(
-                        "face '{}' references missing vertex '{vertex_id}'",
-                        face.id
-                    )
-                })?;
+            let position = *vertex_positions.get(vertex_id.as_str()).with_context(|| {
+                format!("face '{}' references missing vertex '{vertex_id}'", face.id)
+            })?;
             ensure!(
                 position.iter().all(|value| value.is_finite()),
                 "mesh '{}' contains a coordinate outside the renderer's float range",
@@ -187,11 +276,14 @@ fn build_surface_mesh(document: &MeshDocument) -> Result<Option<Mesh>> {
     }
 
     Ok(Some(
-        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-            .with_inserted_indices(Indices::U32(indices)),
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices)),
     ))
 }
 
@@ -205,6 +297,7 @@ pub(super) fn interact_with_meshes(
     active_world: Res<ActiveWorld>,
     mut workspace: ResMut<CharacterStudioWorkspace>,
     mut state: ResMut<MeshViewportState>,
+    mut history: ResMut<MeshDocumentHistory>,
 ) {
     if active_world.kind != Some(super::WorldKind::CharacterStudio) {
         return;
@@ -222,8 +315,7 @@ pub(super) fn interact_with_meshes(
             })
             .unwrap_or(0);
         let next_index = (current_index + 1) % workspace.mesh_documents.len();
-        state.active_document_id =
-            Some(workspace.mesh_documents[next_index].id.clone());
+        state.active_document_id = Some(workspace.mesh_documents[next_index].id.clone());
         state.selection.clear();
     }
 
@@ -239,13 +331,38 @@ pub(super) fn interact_with_meshes(
     }
 
     if state.active_document_id.as_ref().is_none_or(|id| {
-        !workspace.mesh_documents.iter().any(|document| &document.id == id)
+        !workspace
+            .mesh_documents
+            .iter()
+            .any(|document| &document.id == id)
     }) {
         state.active_document_id = workspace
             .mesh_documents
             .first()
             .map(|document| document.id.clone());
         state.selection.clear();
+    }
+
+    let control_pressed = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    let shift_pressed = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if control_pressed && keys.just_pressed(KeyCode::KeyZ) {
+        let result = if shift_pressed {
+            redo_mesh_document(&active_world, &mut workspace, &mut state, &mut history)
+        } else {
+            undo_mesh_document(&active_world, &mut workspace, &mut state, &mut history)
+        };
+        if let Err(error) = result {
+            warn!("Could not change mesh edit history: {error:#}");
+        }
+        return;
+    }
+    if control_pressed && keys.just_pressed(KeyCode::KeyY) {
+        if let Err(error) =
+            redo_mesh_document(&active_world, &mut workspace, &mut state, &mut history)
+        {
+            warn!("Could not redo mesh edit: {error:#}");
+        }
+        return;
     }
 
     let mut grid_steps = [0_i8; 3];
@@ -272,6 +389,7 @@ pub(super) fn interact_with_meshes(
             &active_world,
             &mut workspace,
             &state,
+            &mut history,
             grid_steps,
         ) {
             warn!("Could not move the current mesh selection: {error:#}");
@@ -280,28 +398,32 @@ pub(super) fn interact_with_meshes(
     }
 
     if keys.just_pressed(KeyCode::Delete) {
-        if let Err(error) = delete_selected_elements(&active_world, &mut workspace, &mut state) {
+        if let Err(error) =
+            delete_selected_elements(&active_world, &mut workspace, &mut state, &mut history)
+        {
             warn!("Could not delete the current mesh selection: {error:#}");
         }
         return;
     }
 
     if keys.just_pressed(KeyCode::KeyE) && state.mode == MeshElementMode::Vertex {
-        if let Err(error) = create_edge_from_selection(&active_world, &mut workspace, &mut state) {
+        if let Err(error) =
+            create_edge_from_selection(&active_world, &mut workspace, &mut state, &mut history)
+        {
             warn!("Could not create edge from the current vertex selection: {error:#}");
         }
         return;
     }
     if keys.just_pressed(KeyCode::KeyF) && state.mode == MeshElementMode::Vertex {
-        if let Err(error) = create_face_from_selection(&active_world, &mut workspace, &mut state) {
+        if let Err(error) =
+            create_face_from_selection(&active_world, &mut workspace, &mut state, &mut history)
+        {
             warn!("Could not create face from the current vertex selection: {error:#}");
         }
         return;
     }
 
-    if state.pointer_click_consumed
-        || pending.0.is_some()
-        || !mouse.just_pressed(MouseButton::Left)
+    if state.pointer_click_consumed || pending.0.is_some() || !mouse.just_pressed(MouseButton::Left)
     {
         return;
     }
@@ -334,7 +456,11 @@ pub(super) fn interact_with_meshes(
 
     if let Some(element) = hit {
         if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
-            if let Some(index) = state.selection.iter().position(|existing| existing == &element) {
+            if let Some(index) = state
+                .selection
+                .iter()
+                .position(|existing| existing == &element)
+            {
                 state.selection.remove(index);
             } else {
                 state.selection.push(element);
@@ -354,8 +480,16 @@ pub(super) fn interact_with_meshes(
     let Some(position) = ray_plane_intersection(
         ray.origin,
         ray.direction.as_vec3(),
-        workspace.construction_plane_origin_m.map(|value| value as f32),
-        workspace.construction_plane_normal_world.map(|value| value as f32),
+        Vec3::from_array(
+            workspace
+                .construction_plane_origin_m
+                .map(|value| value as f32),
+        ),
+        Vec3::from_array(
+            workspace
+                .construction_plane_normal_world
+                .map(|value| value as f32),
+        ),
     ) else {
         return;
     };
@@ -371,14 +505,17 @@ pub(super) fn interact_with_meshes(
         warn!("Could not add vertex to mesh '{document_id}': {error:#}");
         return;
     }
-    if let Err(error) =
-        persist_mesh_document(&active_world, &workspace, &previous, &updated)
-    {
+    if let Err(error) = commit_mesh_document(
+        &active_world,
+        &mut workspace,
+        &mut history,
+        document_index,
+        &previous,
+        updated,
+    ) {
         error!("Could not persist vertex in mesh '{document_id}': {error:#}");
         return;
     }
-
-    workspace.mesh_documents[document_index] = updated;
     state.selection = vec![SelectedMeshElement::Vertex(vertex_id)];
 }
 
@@ -475,11 +612,7 @@ fn pick_mesh_element(
     best_element
 }
 
-fn ray_point_distance(
-    origin: Vec3,
-    direction: Vec3,
-    point: Vec3,
-) -> Option<(f32, f32)> {
+fn ray_point_distance(origin: Vec3, direction: Vec3, point: Vec3) -> Option<(f32, f32)> {
     let direction = direction.normalize_or_zero();
     if direction == Vec3::ZERO {
         return None;
@@ -556,13 +689,7 @@ fn ray_segment_distance(
     Some((ray_distance, closest_ray.distance_squared(closest_segment)))
 }
 
-fn ray_triangle_distance(
-    origin: Vec3,
-    direction: Vec3,
-    a: Vec3,
-    b: Vec3,
-    c: Vec3,
-) -> Option<f32> {
+fn ray_triangle_distance(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
     let direction = direction.normalize_or_zero();
     if direction == Vec3::ZERO {
         return None;
@@ -611,9 +738,7 @@ fn ray_plane_intersection(
     (distance >= 0.0 && distance.is_finite()).then_some(ray_origin + direction * distance)
 }
 
-fn construction_plane_axes(
-    workspace: &CharacterStudioWorkspace,
-) -> Option<(Vec3, Vec3, Vec3)> {
+fn construction_plane_axes(workspace: &CharacterStudioWorkspace) -> Option<(Vec3, Vec3, Vec3)> {
     let normal = Vec3::from_array(
         workspace
             .construction_plane_normal_world
@@ -631,14 +756,10 @@ fn construction_plane_axes(
     };
     let tangent = normal.cross(reference).normalize_or_zero();
     let bitangent = normal.cross(tangent).normalize_or_zero();
-    (tangent != Vec3::ZERO && bitangent != Vec3::ZERO)
-        .then_some((tangent, bitangent, normal))
+    (tangent != Vec3::ZERO && bitangent != Vec3::ZERO).then_some((tangent, bitangent, normal))
 }
 
-fn grid_step_offset(
-    workspace: &CharacterStudioWorkspace,
-    steps: [i8; 3],
-) -> Option<Vec3> {
+fn grid_step_offset(workspace: &CharacterStudioWorkspace, steps: [i8; 3]) -> Option<Vec3> {
     let (tangent, bitangent, normal) = construction_plane_axes(workspace)?;
     let spacing = workspace.construction_plane_grid_spacing_m as f32;
     if !spacing.is_finite() || spacing <= 0.0 || steps == [0, 0, 0] {
@@ -656,6 +777,7 @@ fn translate_selected_elements_by_grid(
     active_world: &ActiveWorld,
     workspace: &mut CharacterStudioWorkspace,
     state: &MeshViewportState,
+    history: &mut MeshDocumentHistory,
     steps: [i8; 3],
 ) -> Result<()> {
     ensure!(
@@ -718,15 +840,21 @@ fn translate_selected_elements_by_grid(
 
     let mut updated = previous.clone();
     updated.translate_vertices(&vertex_ids, offset.to_array().map(f64::from))?;
-    persist_mesh_document(active_world, workspace, &previous, &updated)?;
-    workspace.mesh_documents[document_index] = updated;
-    Ok(())
+    commit_mesh_document(
+        active_world,
+        workspace,
+        history,
+        document_index,
+        &previous,
+        updated,
+    )
 }
 
 fn delete_selected_elements(
     active_world: &ActiveWorld,
     workspace: &mut CharacterStudioWorkspace,
     state: &mut MeshViewportState,
+    history: &mut MeshDocumentHistory,
 ) -> Result<()> {
     ensure!(
         !state.selection.is_empty(),
@@ -757,8 +885,14 @@ fn delete_selected_elements(
     let previous = workspace.mesh_documents[document_index].clone();
     let mut updated = previous.clone();
     updated.delete_elements(&vertex_ids, &edge_ids, &face_ids)?;
-    persist_mesh_document(active_world, workspace, &previous, &updated)?;
-    workspace.mesh_documents[document_index] = updated;
+    commit_mesh_document(
+        active_world,
+        workspace,
+        history,
+        document_index,
+        &previous,
+        updated,
+    )?;
     state.selection.clear();
     Ok(())
 }
@@ -767,6 +901,7 @@ fn create_edge_from_selection(
     active_world: &ActiveWorld,
     workspace: &mut CharacterStudioWorkspace,
     state: &mut MeshViewportState,
+    history: &mut MeshDocumentHistory,
 ) -> Result<()> {
     let document_id = state
         .active_document_id
@@ -799,8 +934,14 @@ fn create_edge_from_selection(
         id: edge_id.clone(),
         vertices: [start, end],
     })?;
-    persist_mesh_document(active_world, workspace, &previous, &updated)?;
-    workspace.mesh_documents[document_index] = updated;
+    commit_mesh_document(
+        active_world,
+        workspace,
+        history,
+        document_index,
+        &previous,
+        updated,
+    )?;
     state.mode = MeshElementMode::Edge;
     state.selection = vec![SelectedMeshElement::Edge(edge_id)];
     Ok(())
@@ -810,6 +951,7 @@ fn create_face_from_selection(
     active_world: &ActiveWorld,
     workspace: &mut CharacterStudioWorkspace,
     state: &mut MeshViewportState,
+    history: &mut MeshDocumentHistory,
 ) -> Result<()> {
     let document_id = state
         .active_document_id
@@ -860,10 +1002,98 @@ fn create_face_from_selection(
         material: None,
         uvs: None,
     })?;
-    persist_mesh_document(active_world, workspace, &previous, &updated)?;
-    workspace.mesh_documents[document_index] = updated;
+    commit_mesh_document(
+        active_world,
+        workspace,
+        history,
+        document_index,
+        &previous,
+        updated,
+    )?;
     state.mode = MeshElementMode::Face;
     state.selection = vec![SelectedMeshElement::Face(face_id)];
+    Ok(())
+}
+
+fn undo_mesh_document(
+    active_world: &ActiveWorld,
+    workspace: &mut CharacterStudioWorkspace,
+    state: &mut MeshViewportState,
+    history: &mut MeshDocumentHistory,
+) -> Result<()> {
+    let document_id = state
+        .active_document_id
+        .as_deref()
+        .context("no active mesh document is selected")?;
+    let document_index = workspace
+        .mesh_documents
+        .iter()
+        .position(|document| document.id == document_id)
+        .context("active mesh document is not loaded")?;
+    let current = workspace.mesh_documents[document_index].clone();
+    let target = history
+        .undo_target(document_id)
+        .context("there is no mesh edit to undo")?
+        .clone();
+    ensure!(
+        target.id == current.id,
+        "undo snapshot belongs to a different mesh document"
+    );
+
+    persist_mesh_document(active_world, workspace, &current, &target)?;
+    history.complete_undo(document_id, current)?;
+    workspace.mesh_documents[document_index] = target;
+    state.selection.clear();
+    Ok(())
+}
+
+fn redo_mesh_document(
+    active_world: &ActiveWorld,
+    workspace: &mut CharacterStudioWorkspace,
+    state: &mut MeshViewportState,
+    history: &mut MeshDocumentHistory,
+) -> Result<()> {
+    let document_id = state
+        .active_document_id
+        .as_deref()
+        .context("no active mesh document is selected")?;
+    let document_index = workspace
+        .mesh_documents
+        .iter()
+        .position(|document| document.id == document_id)
+        .context("active mesh document is not loaded")?;
+    let current = workspace.mesh_documents[document_index].clone();
+    let target = history
+        .redo_target(document_id)
+        .context("there is no mesh edit to redo")?
+        .clone();
+    ensure!(
+        target.id == current.id,
+        "redo snapshot belongs to a different mesh document"
+    );
+
+    persist_mesh_document(active_world, workspace, &current, &target)?;
+    history.complete_redo(document_id, current, workspace.mesh_undo_history_limit)?;
+    workspace.mesh_documents[document_index] = target;
+    state.selection.clear();
+    Ok(())
+}
+
+fn commit_mesh_document(
+    active_world: &ActiveWorld,
+    workspace: &mut CharacterStudioWorkspace,
+    history: &mut MeshDocumentHistory,
+    document_index: usize,
+    previous: &MeshDocument,
+    updated: MeshDocument,
+) -> Result<()> {
+    ensure!(
+        workspace.mesh_documents.get(document_index) == Some(previous),
+        "mesh document changed before the edit could be committed"
+    );
+    persist_mesh_document(active_world, workspace, previous, &updated)?;
+    history.record_edit(previous, workspace.mesh_undo_history_limit);
+    workspace.mesh_documents[document_index] = updated;
     Ok(())
 }
 
@@ -877,12 +1107,18 @@ fn persist_mesh_document(
         .outputs_dir
         .as_deref()
         .context("active world does not have an outputs directory")?;
-    let canonical_outputs = outputs_dir
-        .canonicalize()
-        .with_context(|| format!("could not resolve world outputs '{}'", outputs_dir.display()))?;
+    let canonical_outputs = outputs_dir.canonicalize().with_context(|| {
+        format!(
+            "could not resolve world outputs '{}'",
+            outputs_dir.display()
+        )
+    })?;
     let candidate = canonical_outputs.join(&workspace.model_output_directory);
     let canonical_directory = candidate.canonicalize().with_context(|| {
-        format!("could not resolve mesh output directory '{}'", candidate.display())
+        format!(
+            "could not resolve mesh output directory '{}'",
+            candidate.display()
+        )
     })?;
     ensure!(
         canonical_directory.starts_with(&canonical_outputs),
@@ -893,7 +1129,10 @@ fn persist_mesh_document(
 }
 
 fn next_vertex_id(document: &MeshDocument) -> String {
-    next_element_id("vertex", document.vertices.iter().map(|item| item.id.as_str()))
+    next_element_id(
+        "vertex",
+        document.vertices.iter().map(|item| item.id.as_str()),
+    )
 }
 
 fn next_edge_id(document: &MeshDocument) -> String {
@@ -904,10 +1143,7 @@ fn next_face_id(document: &MeshDocument) -> String {
     next_element_id("face", document.faces.iter().map(|item| item.id.as_str()))
 }
 
-fn next_element_id<'a>(
-    prefix: &str,
-    existing: impl Iterator<Item = &'a str>,
-) -> String {
+fn next_element_id<'a>(prefix: &str, existing: impl Iterator<Item = &'a str>) -> String {
     let existing = existing.collect::<std::collections::HashSet<_>>();
     let mut sequence = 1_u64;
     loop {
@@ -919,10 +1155,7 @@ fn next_element_id<'a>(
     }
 }
 
-fn draw_construction_plane_grid(
-    workspace: &CharacterStudioWorkspace,
-    gizmos: &mut Gizmos,
-) {
+fn draw_construction_plane_grid(workspace: &CharacterStudioWorkspace, gizmos: &mut Gizmos) {
     let origin = Vec3::from_array(
         workspace
             .construction_plane_origin_m
@@ -1061,15 +1294,65 @@ mod tests {
     use bevy::math::Vec3;
 
     use super::{
-        construction_plane_axes, grid_step_offset, ray_plane_intersection,
+        MeshDocumentHistory, construction_plane_axes, grid_step_offset, ray_plane_intersection,
         ray_segment_distance, ray_triangle_distance,
     };
-    use crate::editor::CharacterStudioWorkspace;
+    use crate::{editor::CharacterStudioWorkspace, modeling::MeshDocument};
+
+    #[test]
+    fn mesh_history_supports_undo_redo_and_invalidates_redo_after_branching() {
+        let mut history = MeshDocumentHistory::default();
+        let original = MeshDocument::empty("mesh", "Original");
+        let mut edited = original.clone();
+        edited.display_name = "Edited".to_owned();
+
+        history.record_edit(&original, 8);
+        assert_eq!(history.undo_target("mesh"), Some(&original));
+
+        history.complete_undo("mesh", edited.clone()).unwrap();
+        assert_eq!(history.redo_target("mesh"), Some(&edited));
+
+        history.complete_redo("mesh", original.clone(), 8).unwrap();
+        assert_eq!(history.undo_target("mesh"), Some(&original));
+
+        history.complete_undo("mesh", edited.clone()).unwrap();
+        let mut branched = original.clone();
+        branched.display_name = "Branched".to_owned();
+        history.record_edit(&branched, 8);
+        assert!(history.redo_target("mesh").is_none());
+        assert_eq!(history.undo_target("mesh"), Some(&branched));
+    }
+
+    #[test]
+    fn mesh_history_respects_configured_limit_and_zero_disables_history() {
+        let mut history = MeshDocumentHistory::default();
+        for index in 0..3 {
+            let document = MeshDocument::empty("mesh", format!("Snapshot {index}"));
+            history.record_edit(&document, 2);
+        }
+
+        let newest = MeshDocument::empty("mesh", "Snapshot 2");
+        assert_eq!(history.undo_target("mesh"), Some(&newest));
+        history
+            .complete_undo("mesh", MeshDocument::empty("mesh", "Current"))
+            .unwrap();
+        history
+            .complete_undo("mesh", MeshDocument::empty("mesh", "Current"))
+            .unwrap();
+        assert!(history.undo_target("mesh").is_none());
+
+        history.record_edit(&newest, 2);
+        history.record_edit(&newest, 0);
+        assert!(history.undo_target("mesh").is_none());
+        assert!(history.redo_target("mesh").is_none());
+    }
 
     #[test]
     fn construction_plane_axes_are_orthonormal_and_follow_authored_normal() {
-        let mut workspace = CharacterStudioWorkspace::default();
-        workspace.construction_plane_normal_world = [0.0, 0.0, 4.0];
+        let workspace = CharacterStudioWorkspace {
+            construction_plane_normal_world: [0.0, 0.0, 4.0],
+            ..Default::default()
+        };
 
         let (tangent, bitangent, normal) = construction_plane_axes(&workspace).unwrap();
         assert!((normal - Vec3::Z).length() < 1.0e-6);
@@ -1083,9 +1366,11 @@ mod tests {
 
     #[test]
     fn grid_step_translation_uses_authored_spacing_and_plane_axes() {
-        let mut workspace = CharacterStudioWorkspace::default();
-        workspace.construction_plane_normal_world = [0.0, 0.0, 1.0];
-        workspace.construction_plane_grid_spacing_m = 0.5;
+        let workspace = CharacterStudioWorkspace {
+            construction_plane_normal_world: [0.0, 0.0, 1.0],
+            construction_plane_grid_spacing_m: 0.5,
+            ..Default::default()
+        };
 
         let offset = grid_step_offset(&workspace, [1, -1, 1]).unwrap();
         let expected = Vec3::new(-0.5, 0.5, 0.5);
@@ -1097,14 +1382,7 @@ mod tests {
     fn ray_triangle_pick_reports_nearest_forward_hit_only() {
         let origin = Vec3::new(0.25, 0.25, 2.0);
         let direction = Vec3::NEG_Z;
-        let hit = ray_triangle_distance(
-            origin,
-            direction,
-            Vec3::ZERO,
-            Vec3::X,
-            Vec3::Y,
-        )
-        .unwrap();
+        let hit = ray_triangle_distance(origin, direction, Vec3::ZERO, Vec3::X, Vec3::Y).unwrap();
         assert!((hit - 2.0).abs() < 1.0e-6);
         assert!(
             ray_triangle_distance(

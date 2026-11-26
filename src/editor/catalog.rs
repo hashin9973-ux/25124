@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use avian3d::prelude::Gravity;
-use bevy::prelude::*;
+use bevy::log::{error, info, warn};
+use bevy::prelude::{NextState, Res, ResMut, Resource, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -133,6 +134,7 @@ pub struct CharacterStudioWorkspace {
     pub construction_plane_normal_world: [f64; 3],
     pub construction_plane_grid_spacing_m: f64,
     pub construction_plane_grid_extent_m: f64,
+    pub mesh_undo_history_limit: usize,
     pub output_directories: Vec<String>,
     pub species: Vec<Value>,
     pub mesh_documents: Vec<MeshDocument>,
@@ -163,6 +165,26 @@ struct WorkspaceFile {
 struct ModelingSettingsFile {
     schema_version: u32,
     construction_plane: ConstructionPlaneFile,
+    #[serde(default)]
+    edit_history: MeshEditHistorySettingsFile,
+}
+
+#[derive(Deserialize)]
+struct MeshEditHistorySettingsFile {
+    #[serde(default = "default_mesh_undo_history_steps")]
+    maximum_undo_steps: usize,
+}
+
+impl Default for MeshEditHistorySettingsFile {
+    fn default() -> Self {
+        Self {
+            maximum_undo_steps: default_mesh_undo_history_steps(),
+        }
+    }
+}
+
+const fn default_mesh_undo_history_steps() -> usize {
+    64
 }
 
 #[derive(Deserialize)]
@@ -232,7 +254,10 @@ impl CharacterStudioWorkspace {
             "character studio workspace units cannot be empty"
         );
         ensure!(
-            workspace.preview_origin_m.iter().all(|value| value.is_finite()),
+            workspace
+                .preview_origin_m
+                .iter()
+                .all(|value| value.is_finite()),
             "character studio preview_origin_m must contain finite values"
         );
 
@@ -271,10 +296,8 @@ impl CharacterStudioWorkspace {
             .construction_plane
             .normal_world
             .map(|value| value / normal_length);
-        let construction_plane_grid_spacing_m =
-            modeling_settings.construction_plane.grid_spacing_m;
-        let construction_plane_grid_extent_m =
-            modeling_settings.construction_plane.grid_extent_m;
+        let construction_plane_grid_spacing_m = modeling_settings.construction_plane.grid_spacing_m;
+        let construction_plane_grid_extent_m = modeling_settings.construction_plane.grid_extent_m;
         ensure!(
             construction_plane_grid_spacing_m.is_finite()
                 && construction_plane_grid_spacing_m > 0.0
@@ -288,6 +311,11 @@ impl CharacterStudioWorkspace {
             construction_plane_grid_extent_m / construction_plane_grid_spacing_m <= 100.0,
             "construction plane grid may not exceed 100 intervals per side"
         );
+        ensure!(
+            modeling_settings.edit_history.maximum_undo_steps <= 256,
+            "mesh edit history may not exceed 256 undo steps"
+        );
+        let mesh_undo_history_limit = modeling_settings.edit_history.maximum_undo_steps;
 
         let rigging_settings_path = safe_project_path(data_dir, &workspace.rigging_settings)?;
         let rigging_settings: RiggingSettingsFile = read_json(&rigging_settings_path)?;
@@ -332,18 +360,22 @@ impl CharacterStudioWorkspace {
         let component_definitions = components_document
             .get("definitions")
             .and_then(Value::as_object)
-            .ok_or_else(|| anyhow::anyhow!(
-                "world component file '{}' has no definitions object",
-                components_path.display()
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "world component file '{}' has no definitions object",
+                    components_path.display()
+                )
+            })?;
         let mut world_surface_tags = HashSet::new();
         for (definition_id, definition) in component_definitions {
             if let Some(tags) = definition.get("tags").and_then(Value::as_array) {
                 for tag in tags {
-                    let tag = tag.as_str().ok_or_else(|| anyhow::anyhow!(
-                        "component definition '{definition_id}' in '{}' has a non-string tag",
-                        components_path.display()
-                    ))?;
+                    let tag = tag.as_str().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "component definition '{definition_id}' in '{}' has a non-string tag",
+                            components_path.display()
+                        )
+                    })?;
                     ensure!(
                         !tag.trim().is_empty(),
                         "component definition '{definition_id}' in '{}' has an empty tag",
@@ -409,14 +441,22 @@ impl CharacterStudioWorkspace {
                 let joint_ids = collect_ids(&rig, "joints", &rig_path)?;
                 validate_rig(&rig, &segment_ids, &joint_ids, &rig_path)?;
 
-                for segment in rig.get("segments").and_then(Value::as_array).into_iter().flatten() {
-                    let material_id = segment
-                        .get("material")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow::anyhow!(
-                            "rig segment in '{}' is missing a material id",
-                            rig_path.display()
-                        ))?;
+                for segment in rig
+                    .get("segments")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let material_id =
+                        segment
+                            .get("material")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "rig segment in '{}' is missing a material id",
+                                    rig_path.display()
+                                )
+                            })?;
                     ensure!(
                         physical_materials.contains_key(material_id),
                         "rig '{}' references unknown physical material '{}'",
@@ -521,6 +561,7 @@ impl CharacterStudioWorkspace {
             construction_plane_normal_world,
             construction_plane_grid_spacing_m,
             construction_plane_grid_extent_m,
+            mesh_undo_history_limit,
             output_directories: workspace.output_directories,
             species: species_documents,
             mesh_documents,
@@ -536,9 +577,12 @@ fn create_species_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> R
         entry.kind == WorldKind::CharacterStudio,
         "species can only be created in the Character Studio world"
     );
-    let project_root = project_root
-        .canonicalize()
-        .with_context(|| format!("could not resolve project root '{}'", project_root.display()))?;
+    let project_root = project_root.canonicalize().with_context(|| {
+        format!(
+            "could not resolve project root '{}'",
+            project_root.display()
+        )
+    })?;
     let data_dir = safe_project_path(&project_root, &entry.data)?;
     let outputs_dir = safe_project_path(&project_root, &entry.outputs)?;
     let workspace =
@@ -546,16 +590,17 @@ fn create_species_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> R
     let index_path = safe_project_path(&data_dir, &workspace.species_index)?;
     let species_output_dir = outputs_dir.join("species");
     fs::create_dir_all(&species_output_dir).with_context(|| {
-        format!("could not create species output directory '{}'", species_output_dir.display())
+        format!(
+            "could not create species output directory '{}'",
+            species_output_dir.display()
+        )
     })?;
-    let species_output_dir = species_output_dir
-        .canonicalize()
-        .with_context(|| {
-            format!(
-                "could not resolve species output directory '{}'",
-                species_output_dir.display()
-            )
-        })?;
+    let species_output_dir = species_output_dir.canonicalize().with_context(|| {
+        format!(
+            "could not resolve species output directory '{}'",
+            species_output_dir.display()
+        )
+    })?;
     persist_new_species_definition(&project_root, &index_path, &species_output_dir)
 }
 
@@ -564,9 +609,12 @@ fn create_mesh_for_world(project_root: &Path, entry: &WorldCatalogEntry) -> Resu
         entry.kind == WorldKind::CharacterStudio,
         "mesh documents can only be created in Character Studio"
     );
-    let project_root = project_root
-        .canonicalize()
-        .with_context(|| format!("could not resolve project root '{}'", project_root.display()))?;
+    let project_root = project_root.canonicalize().with_context(|| {
+        format!(
+            "could not resolve project root '{}'",
+            project_root.display()
+        )
+    })?;
     let data_dir = safe_project_path(&project_root, &entry.data)?;
     let outputs_dir = safe_project_path(&project_root, &entry.outputs)?;
     let workspace =
@@ -582,15 +630,21 @@ fn persist_new_species_definition(
     index_path: &Path,
     species_output_dir: &Path,
 ) -> Result<String> {
-    let project_root = project_root
-        .canonicalize()
-        .with_context(|| format!("could not resolve project root '{}'", project_root.display()))?;
+    let project_root = project_root.canonicalize().with_context(|| {
+        format!(
+            "could not resolve project root '{}'",
+            project_root.display()
+        )
+    })?;
     let index_path = index_path
         .canonicalize()
         .with_context(|| format!("could not resolve species index '{}'", index_path.display()))?;
-    let species_output_dir = species_output_dir
-        .canonicalize()
-        .with_context(|| format!("could not resolve species output directory '{}'", species_output_dir.display()))?;
+    let species_output_dir = species_output_dir.canonicalize().with_context(|| {
+        format!(
+            "could not resolve species output directory '{}'",
+            species_output_dir.display()
+        )
+    })?;
     ensure!(
         index_path.starts_with(&project_root) && species_output_dir.starts_with(&project_root),
         "species index and output directory must remain inside the project root"
@@ -607,8 +661,7 @@ fn persist_new_species_definition(
     let id = loop {
         let candidate = format!("species_{sequence:03}");
         let candidate_path = species_output_dir.join(format!("{candidate}.species.json"));
-        if !candidate_path.exists()
-            && !index.species.iter().any(|species| species.id == candidate)
+        if !candidate_path.exists() && !index.species.iter().any(|species| species.id == candidate)
         {
             break candidate;
         }
@@ -708,9 +761,15 @@ fn validate_rig(
     let mut root_count = 0_usize;
 
     for segment in segments {
-        let id = segment.get("id").and_then(Value::as_str).unwrap_or_default();
+        let id = segment
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
 
-        let parent = segment.get("parent").and_then(Value::as_str).map(str::to_owned);
+        let parent = segment
+            .get("parent")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         if let Some(parent_id) = &parent {
             ensure!(
                 segment_ids.contains(parent_id),
@@ -729,9 +788,14 @@ fn validate_rig(
             path,
         )?;
 
-        let shape = segment.get("shape").and_then(Value::as_str).unwrap_or_default();
+        let shape = segment
+            .get("shape")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         match shape {
-            "sphere" => validate_positive_number(segment.get("radius_m"), "sphere radius", id, path)?,
+            "sphere" => {
+                validate_positive_number(segment.get("radius_m"), "sphere radius", id, path)?
+            }
             "capsule" => {
                 validate_positive_number(segment.get("radius_m"), "capsule radius", id, path)?;
                 validate_positive_number(segment.get("length_m"), "capsule length", id, path)?;
@@ -740,17 +804,27 @@ fn validate_rig(
                 let extents = segment
                     .get("half_extents_m")
                     .and_then(Value::as_array)
-                    .ok_or_else(|| anyhow::anyhow!("cuboid segment '{id}' in '{}' has no half_extents_m", path.display()))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "cuboid segment '{id}' in '{}' has no half_extents_m",
+                            path.display()
+                        )
+                    })?;
                 ensure!(
                     extents.len() == 3
                         && extents.iter().all(|value| {
-                            value.as_f64().is_some_and(|number| number.is_finite() && number > 0.0)
+                            value
+                                .as_f64()
+                                .is_some_and(|number| number.is_finite() && number > 0.0)
                         }),
                     "cuboid segment '{id}' in '{}' requires three positive finite half-extents",
                     path.display()
                 );
             }
-            _ => bail!("segment '{id}' in '{}' has unsupported shape '{shape}'", path.display()),
+            _ => bail!(
+                "segment '{id}' in '{}' has unsupported shape '{shape}'",
+                path.display()
+            ),
         }
     }
 
@@ -781,20 +855,21 @@ fn validate_rig(
     let mut jointed_children = HashSet::new();
     for joint in joints {
         let id = joint.get("id").and_then(Value::as_str).unwrap_or_default();
-        let parent = joint
-            .get("parent")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("joint '{id}' in '{}' has no parent segment", path.display()))?;
-        let child = joint
-            .get("child")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("joint '{id}' in '{}' has no child segment", path.display()))?;
+        let parent = joint.get("parent").and_then(Value::as_str).ok_or_else(|| {
+            anyhow::anyhow!("joint '{id}' in '{}' has no parent segment", path.display())
+        })?;
+        let child = joint.get("child").and_then(Value::as_str).ok_or_else(|| {
+            anyhow::anyhow!("joint '{id}' in '{}' has no child segment", path.display())
+        })?;
         ensure!(
             segment_ids.contains(parent) && segment_ids.contains(child),
             "joint '{id}' in '{}' references an unknown segment",
             path.display()
         );
-        ensure!(parent != child, "joint '{id}' cannot connect a segment to itself");
+        ensure!(
+            parent != child,
+            "joint '{id}' cannot connect a segment to itself"
+        );
         ensure!(
             parent_by_segment.get(child).and_then(Option::as_deref) == Some(parent),
             "joint '{id}' in '{}' must connect the declared parent to its child",
@@ -806,7 +881,10 @@ fn validate_rig(
             path.display()
         );
 
-        let joint_type = joint.get("type").and_then(Value::as_str).unwrap_or_default();
+        let joint_type = joint
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         ensure!(
             matches!(joint_type, "ball" | "hinge" | "spherical"),
             "joint '{id}' in '{}' has unsupported type '{joint_type}'",
@@ -839,7 +917,10 @@ fn validate_rig(
 
         if let Some(limits) = joint.get("angular_limits_degrees") {
             let ranges = limits.as_array().ok_or_else(|| {
-                anyhow::anyhow!("joint '{id}' angular limits in '{}' must be an array", path.display())
+                anyhow::anyhow!(
+                    "joint '{id}' angular limits in '{}' must be an array",
+                    path.display()
+                )
             })?;
             let expected_axes = if joint_type == "hinge" { 1 } else { 3 };
             ensure!(
@@ -853,9 +934,7 @@ fn validate_rig(
                         pair.len() == 2
                             && pair[0].as_f64().zip(pair[1].as_f64()).is_some_and(
                                 |(minimum, maximum)| {
-                                    minimum.is_finite()
-                                        && maximum.is_finite()
-                                        && minimum <= maximum
+                                    minimum.is_finite() && maximum.is_finite() && minimum <= maximum
                                 },
                             )
                     })
@@ -890,10 +969,14 @@ fn validate_vec3(value: Option<&Value>, label: &str, path: &Path) -> Result<[f64
     );
     let mut result = [0.0; 3];
     for (index, value) in values.iter().enumerate() {
-        let number = value
-            .as_f64()
-            .ok_or_else(|| anyhow::anyhow!("{label} in '{}' contains a non-number", path.display()))?;
-        ensure!(number.is_finite(), "{label} in '{}' contains a non-finite value", path.display());
+        let number = value.as_f64().ok_or_else(|| {
+            anyhow::anyhow!("{label} in '{}' contains a non-number", path.display())
+        })?;
+        ensure!(
+            number.is_finite(),
+            "{label} in '{}' contains a non-finite value",
+            path.display()
+        );
         result[index] = number;
     }
     Ok(result)
@@ -905,9 +988,12 @@ fn validate_positive_number(
     id: &str,
     path: &Path,
 ) -> Result<()> {
-    let number = value
-        .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow::anyhow!("segment '{id}' in '{}' has no numeric {label}", path.display()))?;
+    let number = value.and_then(Value::as_f64).ok_or_else(|| {
+        anyhow::anyhow!(
+            "segment '{id}' in '{}' has no numeric {label}",
+            path.display()
+        )
+    })?;
     ensure!(
         number.is_finite() && number > 0.0,
         "segment '{id}' in '{}' has invalid {label}",
@@ -930,37 +1016,59 @@ fn validate_action_set(
     let mut action_ids = HashSet::new();
 
     for action in actions {
-        let id = action
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("action set '{}' contains an action without an id", path.display()))?;
+        let id = action.get("id").and_then(Value::as_str).ok_or_else(|| {
+            anyhow::anyhow!(
+                "action set '{}' contains an action without an id",
+                path.display()
+            )
+        })?;
         ensure!(
             action_ids.insert(id),
             "action set '{}' contains duplicate action id '{id}'",
             path.display()
         );
 
-        let activation = action.get("activation").and_then(Value::as_str).unwrap_or_default();
+        let activation = action
+            .get("activation")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         ensure!(
-            matches!(activation, "while_trigger_and_conditions_hold" | "on_trigger_edge"),
+            matches!(
+                activation,
+                "while_trigger_and_conditions_hold" | "on_trigger_edge"
+            ),
             "action '{id}' has unsupported activation mode '{activation}'"
         );
 
         let triggers = action
             .get("triggers")
             .and_then(Value::as_array)
-            .ok_or_else(|| anyhow::anyhow!("action '{id}' in '{}' has no triggers array", path.display()))?;
-        ensure!(!triggers.is_empty(), "action '{id}' in '{}' has no triggers", path.display());
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "action '{id}' in '{}' has no triggers array",
+                    path.display()
+                )
+            })?;
+        ensure!(
+            !triggers.is_empty(),
+            "action '{id}' in '{}' has no triggers",
+            path.display()
+        );
 
         for trigger in triggers {
-            let kind = trigger.get("kind").and_then(Value::as_str).unwrap_or_default();
+            let kind = trigger
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             match kind {
                 "key_pressed" | "key_held" => {
-                    let key = trigger
-                        .get("key")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow::anyhow!("key trigger in '{}' has no key", path.display()))?;
-                    ensure!(!key.trim().is_empty(), "action '{id}' has an empty key binding");
+                    let key = trigger.get("key").and_then(Value::as_str).ok_or_else(|| {
+                        anyhow::anyhow!("key trigger in '{}' has no key", path.display())
+                    })?;
+                    ensure!(
+                        !key.trim().is_empty(),
+                        "action '{id}' has an empty key binding"
+                    );
                 }
                 "collision" => {
                     validate_reference(trigger, "segment", segments, "segment", path)?;
@@ -982,22 +1090,35 @@ fn validate_action_set(
 
         if let Some(conditions) = action.get("conditions").and_then(Value::as_array) {
             for condition in conditions {
-                let kind = condition.get("kind").and_then(Value::as_str).unwrap_or_default();
+                let kind = condition
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 match kind {
                     "surface_contact" => {
                         validate_segment_list(condition, "segments", segments, path)?;
-                        validate_surface_tag_list(condition, "surface_tags", world_surface_tags, path)?;
+                        validate_surface_tag_list(
+                            condition,
+                            "surface_tags",
+                            world_surface_tags,
+                            path,
+                        )?;
                         validate_finite_scalar(condition, "minimum_normal_dot", -1.0, 1.0, path)?;
                     }
                     "surface_geometry" => {
                         validate_segment_list(condition, "segments", segments, path)?;
-                        validate_surface_tag_list(condition, "surface_tags", world_surface_tags, path)?;
-                        let geometry = condition
-                            .get("geometry")
-                            .ok_or_else(|| anyhow::anyhow!(
+                        validate_surface_tag_list(
+                            condition,
+                            "surface_tags",
+                            world_surface_tags,
+                            path,
+                        )?;
+                        let geometry = condition.get("geometry").ok_or_else(|| {
+                            anyhow::anyhow!(
                                 "surface geometry condition in '{}' has no geometry object",
                                 path.display()
-                            ))?;
+                            )
+                        })?;
                         let geometry_kind = geometry
                             .get("kind")
                             .and_then(Value::as_str)
@@ -1018,7 +1139,13 @@ fn validate_action_set(
                             path.display()
                         );
                         validate_finite_scalar(geometry, "offset_m", -f64::MAX, f64::MAX, path)?;
-                        validate_finite_scalar(condition, "maximum_slope_degrees", 0.0, 90.0, path)?;
+                        validate_finite_scalar(
+                            condition,
+                            "maximum_slope_degrees",
+                            0.0,
+                            90.0,
+                            path,
+                        )?;
                     }
                     "joint_angle_threshold" => {
                         validate_reference(condition, "joint", joints, "joint", path)?;
@@ -1048,13 +1175,25 @@ fn validate_action_set(
         let actuators = action
             .get("actuators")
             .and_then(Value::as_array)
-            .ok_or_else(|| anyhow::anyhow!("action '{id}' in '{}' has no actuators array", path.display()))?;
-        ensure!(!actuators.is_empty(), "action '{id}' in '{}' has no actuators", path.display());
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "action '{id}' in '{}' has no actuators array",
+                    path.display()
+                )
+            })?;
+        ensure!(
+            !actuators.is_empty(),
+            "action '{id}' in '{}' has no actuators",
+            path.display()
+        );
 
         for actuator in actuators {
             validate_reference(actuator, "joint", joints, "actuator joint", path)?;
             validate_non_zero_axis(actuator, "axis_local", path)?;
-            let kind = actuator.get("kind").and_then(Value::as_str).unwrap_or_default();
+            let kind = actuator
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let torque_limit = validate_finite_scalar(
                 actuator,
                 "torque_limit_nm",
@@ -1064,13 +1203,8 @@ fn validate_action_set(
             )?;
             match kind {
                 "joint_torque" => {
-                    let torque = validate_finite_scalar(
-                        actuator,
-                        "torque_nm",
-                        -f64::MAX,
-                        f64::MAX,
-                        path,
-                    )?;
+                    let torque =
+                        validate_finite_scalar(actuator, "torque_nm", -f64::MAX, f64::MAX, path)?;
                     ensure!(
                         torque.abs() <= torque_limit,
                         "action '{id}' torque command exceeds torque_limit_nm in '{}'",
@@ -1078,22 +1212,16 @@ fn validate_action_set(
                     );
                 }
                 "joint_angular_velocity_target" => {
-                    validate_finite_scalar(
-                        actuator,
-                        "target_rad_s",
-                        -f64::MAX,
-                        f64::MAX,
-                        path,
-                    )?;
+                    validate_finite_scalar(actuator, "target_rad_s", -f64::MAX, f64::MAX, path)?;
                 }
                 _ => bail!("unsupported actuator kind '{kind}' in '{}'", path.display()),
             }
         }
     }
 
-    let policy = action_set
-        .get("execution_policy")
-        .ok_or_else(|| anyhow::anyhow!("action set '{}' has no execution policy", path.display()))?;
+    let policy = action_set.get("execution_policy").ok_or_else(|| {
+        anyhow::anyhow!("action set '{}' has no execution policy", path.display())
+    })?;
     for flag in [
         "allow_impulses",
         "allow_root_teleport",
@@ -1107,7 +1235,10 @@ fn validate_action_set(
         );
     }
     ensure!(
-        policy.get("forces_and_joint_motors_only").and_then(Value::as_bool) == Some(true),
+        policy
+            .get("forces_and_joint_motors_only")
+            .and_then(Value::as_bool)
+            == Some(true),
         "action set '{}' must restrict actuation to force/torque and joint-motor outputs",
         path.display()
     );
@@ -1120,16 +1251,22 @@ fn validate_segment_list(
     valid_ids: &HashSet<String>,
     path: &Path,
 ) -> Result<()> {
-    let entries = document
-        .get(key)
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("segment list '{key}' in '{}' is missing", path.display()))?;
-    ensure!(!entries.is_empty(), "segment list '{key}' in '{}' cannot be empty", path.display());
+    let entries = document.get(key).and_then(Value::as_array).ok_or_else(|| {
+        anyhow::anyhow!("segment list '{key}' in '{}' is missing", path.display())
+    })?;
+    ensure!(
+        !entries.is_empty(),
+        "segment list '{key}' in '{}' cannot be empty",
+        path.display()
+    );
 
     for entry in entries {
-        let id = entry
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("segment list '{key}' in '{}' contains a non-string id", path.display()))?;
+        let id = entry.as_str().ok_or_else(|| {
+            anyhow::anyhow!(
+                "segment list '{key}' in '{}' contains a non-string id",
+                path.display()
+            )
+        })?;
         ensure!(
             valid_ids.contains(id),
             "unknown segment '{id}' in segment list '{key}' in '{}'",
@@ -1149,13 +1286,21 @@ fn validate_surface_tag_list(
         .get(key)
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("'{key}' in '{}' must be an array", path.display()))?;
-    ensure!(!entries.is_empty(), "'{key}' in '{}' cannot be empty", path.display());
+    ensure!(
+        !entries.is_empty(),
+        "'{key}' in '{}' cannot be empty",
+        path.display()
+    );
 
     for entry in entries {
-        let tag = entry
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("'{key}' in '{}' contains a non-string tag", path.display()))?;
-        ensure!(!tag.trim().is_empty(), "'{key}' in '{}' contains an empty tag", path.display());
+        let tag = entry.as_str().ok_or_else(|| {
+            anyhow::anyhow!("'{key}' in '{}' contains a non-string tag", path.display())
+        })?;
+        ensure!(
+            !tag.trim().is_empty(),
+            "'{key}' in '{}' contains an empty tag",
+            path.display()
+        );
         ensure!(
             valid_tags.contains(tag),
             "unknown surface tag '{tag}' in '{key}' in '{}'",
@@ -1214,10 +1359,12 @@ fn validate_reference(
     label: &str,
     path: &Path,
 ) -> Result<()> {
-    let id = document
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("{label} reference in '{}' is missing '{key}'", path.display()))?;
+    let id = document.get(key).and_then(Value::as_str).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{label} reference in '{}' is missing '{key}'",
+            path.display()
+        )
+    })?;
     ensure!(
         valid_ids.contains(id),
         "unknown {label} '{id}' referenced in '{}'",
@@ -1225,10 +1372,7 @@ fn validate_reference(
     );
     Ok(())
 }
-pub(super) fn load_world_catalog(
-    root: Res<EditorProjectRoot>,
-    mut catalog: ResMut<WorldCatalog>,
-) {
+pub(super) fn load_world_catalog(root: Res<EditorProjectRoot>, mut catalog: ResMut<WorldCatalog>) {
     let path = root.0.join("worlds/catalog.json");
     match read_catalog(&path) {
         Ok(mut loaded) => {
@@ -1255,7 +1399,10 @@ pub(super) fn load_world_catalog(
             );
         }
         Err(error) => {
-            error!("Could not load world catalog '{}': {error:#}", path.display());
+            error!(
+                "Could not load world catalog '{}': {error:#}",
+                path.display()
+            );
         }
     }
 }
@@ -1273,7 +1420,10 @@ fn parse_catalog(contents: &str, source: &Path) -> Result<WorldCatalog> {
 
     let mut ids = HashSet::new();
     for world in &catalog.worlds {
-        ensure!(!world.id.trim().is_empty(), "world catalog ids cannot be empty");
+        ensure!(
+            !world.id.trim().is_empty(),
+            "world catalog ids cannot be empty"
+        );
         ensure!(
             ids.insert(world.id.as_str()),
             "duplicate world catalog id '{}'",
@@ -1342,7 +1492,10 @@ fn create_catalog_temp_file(path: &Path, purpose: &str) -> Result<(PathBuf, File
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(error).with_context(|| {
-                    format!("could not create catalog staging file '{}'", candidate.display())
+                    format!(
+                        "could not create catalog staging file '{}'",
+                        candidate.display()
+                    )
                 });
             }
         }
@@ -1382,33 +1535,36 @@ fn atomic_write_json(
     let mut backup_temporary_path = None;
 
     let result = (|| -> Result<()> {
-        temporary_file
-            .write_all(&contents)
-            .with_context(|| format!("could not write staged JSON '{}'", temporary_path.display()))?;
-        temporary_file
-            .sync_all()
-            .with_context(|| format!("could not flush staged JSON '{}'", temporary_path.display()))?;
+        temporary_file.write_all(&contents).with_context(|| {
+            format!("could not write staged JSON '{}'", temporary_path.display())
+        })?;
+        temporary_file.sync_all().with_context(|| {
+            format!("could not flush staged JSON '{}'", temporary_path.display())
+        })?;
         drop(temporary_file);
 
         if preserve_current_generation && path.is_file() {
             let previous_contents = fs::read(path)
                 .with_context(|| format!("could not read current JSON '{}'", path.display()))?;
-            let (staged_backup_path, mut backup_file) =
-                create_catalog_temp_file(path, "backup")?;
+            let (staged_backup_path, mut backup_file) = create_catalog_temp_file(path, "backup")?;
             backup_temporary_path = Some(staged_backup_path.clone());
             backup_file
                 .write_all(&previous_contents)
-                .with_context(|| {
-                    format!("could not stage previous JSON '{}'", path.display())
-                })?;
+                .with_context(|| format!("could not stage previous JSON '{}'", path.display()))?;
             backup_file.sync_all().with_context(|| {
-                format!("could not flush previous JSON generation for '{}'", path.display())
+                format!(
+                    "could not flush previous JSON generation for '{}'",
+                    path.display()
+                )
             })?;
             drop(backup_file);
             let previous_path = path.with_extension("json.prev");
             if previous_path.exists() {
                 fs::remove_file(&previous_path).with_context(|| {
-                    format!("could not remove stale previous JSON '{}'", previous_path.display())
+                    format!(
+                        "could not remove stale previous JSON '{}'",
+                        previous_path.display()
+                    )
                 })?;
             }
             fs::rename(&staged_backup_path, &previous_path).with_context(|| {
@@ -1430,7 +1586,10 @@ fn atomic_write_json(
             sync_catalog_directory(parent)?;
         }
         fs::rename(&temporary_path, path).with_context(|| {
-            format!("could not commit staged JSON '{}'", temporary_path.display())
+            format!(
+                "could not commit staged JSON '{}'",
+                temporary_path.display()
+            )
         })?;
         sync_catalog_directory(parent)?;
         Ok(())
@@ -1540,7 +1699,9 @@ pub(super) fn process_menu_command(
                     studio_workspace: &mut studio_workspace,
                     next_screen: &mut next_screen,
                 }),
-                None => bail!("world id '{id}' is not present in the catalog"),
+                None => Err(anyhow::anyhow!(
+                    "world id '{id}' is not present in the catalog"
+                )),
             }
         }
         MenuAction::PreviousWorldPage => {
@@ -1611,21 +1772,19 @@ pub(super) fn process_menu_command(
             );
             Ok(())
         })(),
-        MenuAction::CreateWorld => {
-            create_empty_world(&root.0, &mut catalog).and_then(|world| {
-                open_world(WorldOpenContext {
-                    project_root: &root.0,
-                    entry: &world,
-                    runtime_config: &mut runtime_config,
-                    state_file: &mut state_file,
-                    save_target: &mut save_target,
-                    gravity: &mut gravity,
-                    active_world: &mut active_world,
-                    studio_workspace: &mut studio_workspace,
-                    next_screen: &mut next_screen,
-                })
+        MenuAction::CreateWorld => create_empty_world(&root.0, &mut catalog).and_then(|world| {
+            open_world(WorldOpenContext {
+                project_root: &root.0,
+                entry: &world,
+                runtime_config: &mut runtime_config,
+                state_file: &mut state_file,
+                save_target: &mut save_target,
+                gravity: &mut gravity,
+                active_world: &mut active_world,
+                studio_workspace: &mut studio_workspace,
+                next_screen: &mut next_screen,
             })
-        }
+        }),
     };
 
     if let Err(error) = result {
@@ -1662,32 +1821,43 @@ fn open_world(context: WorldOpenContext<'_>) -> Result<()> {
     let assets_dir = safe_project_path(project_root, &entry.assets)?;
     let outputs_dir = safe_project_path(project_root, &entry.outputs)?;
 
-    ensure!(manifest.is_file(), "world manifest '{}' does not exist", manifest.display());
-    ensure!(data_dir.is_dir(), "world data directory '{}' does not exist", data_dir.display());
-    ensure!(assets_dir.is_dir(), "world asset directory '{}' does not exist", assets_dir.display());
-    ensure!(outputs_dir.is_dir(), "world outputs directory '{}' does not exist", outputs_dir.display());
+    ensure!(
+        manifest.is_file(),
+        "world manifest '{}' does not exist",
+        manifest.display()
+    );
+    ensure!(
+        data_dir.is_dir(),
+        "world data directory '{}' does not exist",
+        data_dir.display()
+    );
+    ensure!(
+        assets_dir.is_dir(),
+        "world asset directory '{}' does not exist",
+        assets_dir.display()
+    );
+    ensure!(
+        outputs_dir.is_dir(),
+        "world outputs directory '{}' does not exist",
+        outputs_dir.display()
+    );
 
-    let loaded = RuntimeConfig::load(
-        project_root.to_owned(),
-        data_dir,
-        assets_dir,
-        manifest,
-    )
-    .with_context(|| format!("could not load world '{}'", entry.id))?;
+    let loaded = RuntimeConfig::load(project_root.to_owned(), data_dir, assets_dir, manifest)
+        .with_context(|| format!("could not load world '{}'", entry.id))?;
     let loaded_state =
         WorldStateFile::load_or_default(&loaded.paths.world_state, &loaded.world.id)?;
 
     if matches!(entry.kind, WorldKind::CharacterStudio) {
-        *studio_workspace =
-            CharacterStudioWorkspace::load(
-                &loaded.paths.root_dir,
-                &loaded.paths.data_dir,
-                &outputs_dir,
-                &entry.id,
-            )?;
+        *studio_workspace = CharacterStudioWorkspace::load(
+            &loaded.paths.root_dir,
+            &loaded.paths.data_dir,
+            &outputs_dir,
+            &entry.id,
+        )?;
         info!(
-            "Loaded workspace '{}' ({}) with species index '{}', action index '{}', and tool catalog '{}'",
+            "Loaded workspace '{}' (id '{}', {}) with species index '{}', action index '{}', and tool catalog '{}'",
             studio_workspace.display_name,
+            studio_workspace.id,
             studio_workspace.units,
             studio_workspace.species_index,
             studio_workspace.actions_index,
@@ -1701,7 +1871,7 @@ fn open_world(context: WorldOpenContext<'_>) -> Result<()> {
             studio_workspace
                 .tool_catalog
                 .get("tool_groups")
-                .and_then(Value::as_array)
+                .and_then(|value| value.as_array())
                 .map_or(0, Vec::len),
             studio_workspace.schema_version
         );
@@ -1716,7 +1886,11 @@ fn open_world(context: WorldOpenContext<'_>) -> Result<()> {
     }
 
     for id in loaded_state.bodies.keys() {
-        let instance = loaded.world.objects.iter().find(|instance| instance.id == *id);
+        let instance = loaded
+            .world
+            .objects
+            .iter()
+            .find(|instance| instance.id == *id);
         match instance {
             None => warn!(
                 "Save for world '{}' contains unresolved object '{}'; retaining its state",
@@ -1768,8 +1942,12 @@ fn create_empty_world(
     catalog: &mut WorldCatalog,
 ) -> Result<WorldCatalogEntry> {
     let worlds_dir = project_root.join("worlds");
-    fs::create_dir_all(&worlds_dir)
-        .with_context(|| format!("could not create worlds directory '{}'", worlds_dir.display()))?;
+    fs::create_dir_all(&worlds_dir).with_context(|| {
+        format!(
+            "could not create worlds directory '{}'",
+            worlds_dir.display()
+        )
+    })?;
 
     let mut index = 1_u32;
     let id = loop {
@@ -1781,7 +1959,7 @@ fn create_empty_world(
         }
         index = index
             .checked_add(1)
-            .ok_or_else(|| anyhow!("world id sequence is exhausted"))?;
+            .ok_or_else(|| anyhow::anyhow!("world id sequence is exhausted"))?;
     };
 
     let world_name = format!("New World {index}");
@@ -1809,7 +1987,10 @@ fn create_empty_world(
         outputs_dir.join("autosaves"),
     ] {
         fs::create_dir_all(&directory).with_context(|| {
-            format!("could not create new-world directory '{}'", directory.display())
+            format!(
+                "could not create new-world directory '{}'",
+                directory.display()
+            )
         })?;
     }
 
@@ -1844,9 +2025,6 @@ fn create_empty_world(
     Ok(entry)
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -1880,6 +2058,7 @@ mod tests {
         assert_eq!(workspace.construction_plane_normal_world, [0.0, 1.0, 0.0]);
         assert_eq!(workspace.construction_plane_grid_spacing_m, 0.25);
         assert_eq!(workspace.construction_plane_grid_extent_m, 5.0);
+        assert_eq!(workspace.mesh_undo_history_limit, 64);
         assert!(
             workspace
                 .tool_catalog
@@ -2036,7 +2215,9 @@ mod tests {
         )
         .expect("empty species index should be written");
 
-        let project_root = root.canonicalize().expect("temporary project root should resolve");
+        let project_root = root
+            .canonicalize()
+            .expect("temporary project root should resolve");
         let first = persist_new_species_definition(&project_root, &index_path, &output_dir)
             .expect("first species draft should persist");
         let second = persist_new_species_definition(&project_root, &index_path, &output_dir)
@@ -2096,7 +2277,10 @@ mod tests {
             .expect("second catalog generation should be written");
 
         assert_eq!(
-            read_catalog(&path).expect("current catalog should load").worlds[0].id,
+            read_catalog(&path)
+                .expect("current catalog should load")
+                .worlds[0]
+                .id,
             "second"
         );
         assert_eq!(
@@ -2119,7 +2303,10 @@ mod tests {
         write_catalog(&path, &make_catalog("third"))
             .expect("a valid new catalog should replace a corrupt primary");
         assert_eq!(
-            read_catalog(&path).expect("new primary catalog should load").worlds[0].id,
+            read_catalog(&path)
+                .expect("new primary catalog should load")
+                .worlds[0]
+                .id,
             "third"
         );
         assert_eq!(
@@ -2162,8 +2349,8 @@ mod tests {
         let mut catalog = WorldCatalog::default();
         let created = create_empty_world(&root, &mut catalog)
             .expect("world should be allocated after the orphan directory");
-        let sentinel = fs::read(orphan.join("keep.txt"))
-            .expect("orphan sentinel should remain readable");
+        let sentinel =
+            fs::read(orphan.join("keep.txt")).expect("orphan sentinel should remain readable");
 
         assert_eq!(created.id, "world_002");
         assert_eq!(sentinel.as_slice(), b"preserve me");
@@ -2194,4 +2381,3 @@ mod tests {
         );
     }
 }
-

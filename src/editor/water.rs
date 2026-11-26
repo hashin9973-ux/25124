@@ -4,6 +4,9 @@ use bevy::{
     prelude::*,
 };
 
+use bevy::camera::visibility::NoFrustumCulling;
+use bevy::render::render_resource::Face;
+
 use super::menu::MenuCamera;
 
 const GRID: usize = 112;
@@ -119,28 +122,28 @@ pub(super) fn animate_water(
 
     if let Some(cursor) = window.cursor_position() {
         if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) {
-            pointer_world =
-                ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y));
+            pointer_world = ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y));
         }
 
         let moved = ripples
             .last_cursor
             .is_some_and(|last| (cursor - last).length_squared() > 2.0);
-        if moved && elapsed - ripples.last_pointer_impulse >= 0.075 {
-            if let Some(point) = pointer_world.filter(|point| {
+        if moved
+            && elapsed - ripples.last_pointer_impulse >= 0.075
+            && let Some(point) = pointer_world.filter(|point| {
                 point.x.abs() <= WATER_SIZE * 0.5 && point.z.abs() <= WATER_SIZE * 0.5
-            }) {
-                ripples.push(Vec2::new(point.x, point.z), elapsed, 0.23, 6.4, 4.0);
-                ripples.last_pointer_impulse = elapsed;
-            }
+            })
+        {
+            ripples.push(Vec2::new(point.x, point.z), elapsed, 0.23, 6.4, 4.0);
+            ripples.last_pointer_impulse = elapsed;
         }
-        if mouse_buttons.just_pressed(MouseButton::Left) {
-            if let Some(point) = pointer_world.filter(|point| {
+        if mouse_buttons.just_pressed(MouseButton::Left)
+            && let Some(point) = pointer_world.filter(|point| {
                 point.x.abs() <= WATER_SIZE * 0.5 && point.z.abs() <= WATER_SIZE * 0.5
-            }) {
-                ripples.push(Vec2::new(point.x, point.z), elapsed, 0.62, 5.1, 3.5);
-                ripples.last_pointer_impulse = elapsed;
-            }
+            })
+        {
+            ripples.push(Vec2::new(point.x, point.z), elapsed, 0.62, 5.1, 3.5);
+            ripples.last_pointer_impulse = elapsed;
         }
         ripples.last_cursor = Some(cursor);
     } else {
@@ -162,7 +165,7 @@ pub(super) fn animate_water(
         .retain(|ripple| elapsed - ripple.created_at <= RIPPLE_LIFETIME);
 
     for surface in &water {
-        let Some(mesh) = meshes.get_mut(&surface.mesh) else {
+        let Some(mut mesh) = meshes.get_mut(&surface.mesh) else {
             continue;
         };
         let vertex_count = (surface.grid + 1) * (surface.grid + 1);

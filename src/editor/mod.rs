@@ -1,14 +1,15 @@
 mod catalog;
 mod menu;
 mod mesh_viewport;
+use mesh_viewport::{MeshElementMode, MeshViewportState};
 mod studio;
 mod water;
 
+use bevy::prelude::*;
 pub use catalog::{
     ActiveWorld, CharacterRigDefinition, CharacterRigJoint, CharacterRigSegment,
     CharacterStudioWorkspace, EditorProjectRoot, PreviewJointDamping, WorldCatalog, WorldKind,
 };
-use bevy::prelude::*;
 
 use crate::{config::RuntimeConfig, persistence::WorldStateFile};
 
@@ -62,21 +63,19 @@ impl Plugin for EditorPlugin {
             .init_resource::<CharacterStudioWorkspace>()
             .init_resource::<PendingMenuCommand>()
             .init_resource::<mesh_viewport::MeshViewportState>()
+            .init_resource::<mesh_viewport::MeshDocumentHistory>()
             .init_resource::<mesh_viewport::RenderedMeshSnapshot>()
             .init_resource::<WorldBrowserPage>()
             .init_resource::<MenuSceneDirty>()
             .init_resource::<water::RippleField>()
             .add_systems(Startup, catalog::load_world_catalog)
             .add_systems(OnEnter(EditorScreen::MainMenu), menu::spawn_main_menu)
-            .add_systems(OnEnter(EditorScreen::WorldBrowser), menu::spawn_world_browser)
             .add_systems(
-                OnExit(EditorScreen::MainMenu),
-                menu::despawn_menu_scene,
+                OnEnter(EditorScreen::WorldBrowser),
+                menu::spawn_world_browser,
             )
-            .add_systems(
-                OnExit(EditorScreen::WorldBrowser),
-                menu::despawn_menu_scene,
-            )
+            .add_systems(OnExit(EditorScreen::MainMenu), menu::despawn_menu_scene)
+            .add_systems(OnExit(EditorScreen::WorldBrowser), menu::despawn_menu_scene)
             .add_systems(
                 Update,
                 (
@@ -125,26 +124,25 @@ fn return_to_menu(
     mut active_world: ResMut<ActiveWorld>,
     mut studio_workspace: ResMut<CharacterStudioWorkspace>,
     mut mesh_viewport: ResMut<mesh_viewport::MeshViewportState>,
+    mut mesh_history: ResMut<mesh_viewport::MeshDocumentHistory>,
     mut rendered_mesh: ResMut<mesh_viewport::RenderedMeshSnapshot>,
     mut next_screen: ResMut<NextState<EditorScreen>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         info!(
             "Leaving world {:?} ({:?}); outputs directory: {:?}",
-            active_world.id,
-            active_world.kind,
-            active_world.outputs_dir
+            active_world.id, active_world.kind, active_world.outputs_dir
         );
         if !studio_workspace.display_name.is_empty() {
             info!(
                 "Closed workspace '{}' using {} units",
-                studio_workspace.display_name,
-                studio_workspace.units
+                studio_workspace.display_name, studio_workspace.units
             );
         }
         *active_world = ActiveWorld::default();
         *studio_workspace = CharacterStudioWorkspace::default();
         *mesh_viewport = mesh_viewport::MeshViewportState::default();
+        *mesh_history = mesh_viewport::MeshDocumentHistory::default();
         *rendered_mesh = mesh_viewport::RenderedMeshSnapshot::default();
         next_screen.set(EditorScreen::MainMenu);
     }

@@ -2,20 +2,27 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail, ensure};
 use avian3d::prelude::{
-    AngularDamping, AngularVelocity, Collider, ColliderDensity, CollisionEventsEnabled,
-    Friction, JointCollisionDisabled, JointDamping, LinearDamping, LinearVelocity, Restitution,
+    AngularDamping, AngularVelocity, Collider, ColliderDensity, CollisionEventsEnabled, Friction,
+    JointCollisionDisabled, JointDamping, LinearDamping, LinearVelocity, Restitution,
     RevoluteJoint, RigidBody, SphericalJoint,
 };
-use bevy::prelude::*;
+use bevy::log::info;
+use bevy::mesh::Meshable;
+use bevy::prelude::{
+    AlphaMode, Assets, Bundle, Capsule3d, Color, Commands, Component, Cuboid, Entity, EulerRot,
+    Handle, Mesh, Mesh3d, MeshMaterial3d, Name, Quat, Sphere, StandardMaterial, Transform, Vec3,
+};
 
 use crate::{
     config::{MaterialDefinition, RuntimeConfig},
-    editor::{
-        CharacterRigDefinition, CharacterRigJoint, CharacterRigSegment, PreviewJointDamping,
-    },
+    editor::{CharacterRigDefinition, CharacterRigJoint, CharacterRigSegment, PreviewJointDamping},
     world::WorldInstanceEntity,
 };
 
+#[allow(
+    dead_code,
+    reason = "stable generic preview metadata for future authoring and inspection tools"
+)]
 #[derive(Component, Debug)]
 pub struct SpeciesPreviewSegment {
     pub species_id: String,
@@ -37,9 +44,7 @@ impl PreviewMeshKey {
                 radius,
                 segment_length,
             } => Self::Capsule(radius.to_bits(), segment_length.to_bits()),
-            PreviewShape::Cuboid { half_extents } => {
-                Self::Cuboid(half_extents.map(f32::to_bits))
-            }
+            PreviewShape::Cuboid { half_extents } => Self::Cuboid(half_extents.map(f32::to_bits)),
         }
     }
 }
@@ -55,12 +60,19 @@ impl PreviewShape {
     fn from_segment(segment: &CharacterRigSegment) -> Result<Self> {
         match segment.shape.as_str() {
             "sphere" => {
-                let radius = segment.radius_m.context("sphere segment is missing radius_m")?;
-                ensure!(radius.is_finite() && radius > 0.0, "sphere radius must be finite and positive");
+                let radius = segment
+                    .radius_m
+                    .context("sphere segment is missing radius_m")?;
+                ensure!(
+                    radius.is_finite() && radius > 0.0,
+                    "sphere radius must be finite and positive"
+                );
                 Ok(Self::Sphere { radius })
             }
             "capsule" => {
-                let radius = segment.radius_m.context("capsule segment is missing radius_m")?;
+                let radius = segment
+                    .radius_m
+                    .context("capsule segment is missing radius_m")?;
                 let segment_length = segment
                     .length_m
                     .context("capsule segment is missing length_m")?;
@@ -81,7 +93,9 @@ impl PreviewShape {
                     .half_extents_m
                     .context("cuboid segment is missing half_extents_m")?;
                 ensure!(
-                    half_extents.iter().all(|value| value.is_finite() && *value > 0.0),
+                    half_extents
+                        .iter()
+                        .all(|value| value.is_finite() && *value > 0.0),
                     "cuboid half extents must be finite and positive"
                 );
                 Ok(Self::Cuboid { half_extents })
@@ -130,7 +144,11 @@ pub(super) fn spawn_rig(
     origin: Vec3,
     joint_damping: &PreviewJointDamping,
 ) -> Result<()> {
-    ensure!(rig.schema_version == 1, "unsupported rig schema for '{}'", rig.species);
+    ensure!(
+        rig.schema_version == 1,
+        "unsupported rig schema for '{}'",
+        rig.species
+    );
     let mut pending = rig.segments.iter().collect::<Vec<_>>();
     let mut body_entities = HashMap::<String, Entity>::with_capacity(rig.segments.len());
     let mut world_transforms = HashMap::<String, Transform>::with_capacity(rig.segments.len());
@@ -155,7 +173,7 @@ pub(super) fn spawn_rig(
             crate::config::AlphaMode::Opaque => AlphaMode::Opaque,
             crate::config::AlphaMode::Blend => AlphaMode::Blend,
         },
-        ..default()
+        ..Default::default()
     });
 
     while !pending.is_empty() {
@@ -178,7 +196,7 @@ pub(super) fn spawn_rig(
             let local_transform = Transform {
                 translation: Vec3::from_array(segment.local_center_m),
                 rotation: local_rotation,
-                ..default()
+                ..Default::default()
             };
             let world_transform = parent_transform.mul_transform(local_transform);
             let mesh_key = PreviewMeshKey::from_shape(&shape);
@@ -223,7 +241,7 @@ pub(super) fn spawn_rig(
     }
 
     for joint in &rig.joints {
-        spawn_joint(commands, rig, joint, &body_entities)?;
+        spawn_joint(commands, rig, joint, &body_entities, joint_damping)?;
     }
 
     info!(
@@ -245,10 +263,7 @@ struct SegmentSpawnContext<'a> {
     transform: Transform,
 }
 
-fn spawn_segment(
-    commands: &mut Commands,
-    context: SegmentSpawnContext<'_>,
-) -> Result<Entity> {
+fn spawn_segment(commands: &mut Commands, context: SegmentSpawnContext<'_>) -> Result<Entity> {
     let SegmentSpawnContext {
         rig,
         segment,
@@ -265,32 +280,52 @@ fn spawn_segment(
         segment.id
     );
 
-    let friction = Friction::new(material.dynamic_friction)
-        .with_static_coefficient(material.static_friction);
+    let friction =
+        Friction::new(material.dynamic_friction).with_static_coefficient(material.static_friction);
     let entity = commands
-        .spawn((
-            Name::new(format!("{}::{}", rig.species, segment.id)),
-            WorldInstanceEntity,
-            SpeciesPreviewSegment {
+        .spawn(SpeciesPreviewSegmentBundle {
+            name: Name::new(format!("{}::{}", rig.species, segment.id)),
+            world_instance: WorldInstanceEntity,
+            species_segment: SpeciesPreviewSegment {
                 species_id: rig.species.clone(),
                 segment_id: segment.id.clone(),
             },
-            RigidBody::Dynamic,
-            shape.collider(),
-            ColliderDensity(material.density_kg_m3),
+            rigid_body: RigidBody::Dynamic,
+            collider: shape.collider(),
+            density: ColliderDensity(material.density_kg_m3),
             friction,
-            Restitution::new(material.restitution),
-            LinearDamping(material.linear_damping),
-            AngularDamping(material.angular_damping),
-            CollisionEventsEnabled,
-            LinearVelocity::ZERO,
-            AngularVelocity::ZERO,
-            Mesh3d(mesh),
-            MeshMaterial3d(visual_material),
+            restitution: Restitution::new(material.restitution),
+            linear_damping: LinearDamping(material.linear_damping),
+            angular_damping: AngularDamping(material.angular_damping),
+            collision_events: CollisionEventsEnabled,
+            linear_velocity: LinearVelocity::ZERO,
+            angular_velocity: AngularVelocity::ZERO,
+            mesh: Mesh3d(mesh),
+            material: MeshMaterial3d(visual_material),
             transform,
-        ))
+        })
         .id();
     Ok(entity)
+}
+
+#[derive(Bundle)]
+struct SpeciesPreviewSegmentBundle {
+    name: Name,
+    world_instance: WorldInstanceEntity,
+    species_segment: SpeciesPreviewSegment,
+    rigid_body: RigidBody,
+    collider: Collider,
+    density: ColliderDensity,
+    friction: Friction,
+    restitution: Restitution,
+    linear_damping: LinearDamping,
+    angular_damping: AngularDamping,
+    collision_events: CollisionEventsEnabled,
+    linear_velocity: LinearVelocity,
+    angular_velocity: AngularVelocity,
+    mesh: Mesh3d,
+    material: MeshMaterial3d<StandardMaterial>,
+    transform: Transform,
 }
 
 fn spawn_joint(
@@ -298,13 +333,20 @@ fn spawn_joint(
     rig: &CharacterRigDefinition,
     joint: &CharacterRigJoint,
     bodies: &HashMap<String, Entity>,
+    joint_damping: &PreviewJointDamping,
 ) -> Result<()> {
-    let body1 = *bodies
-        .get(&joint.parent)
-        .with_context(|| format!("joint '{}' has unknown parent body '{}'", joint.id, joint.parent))?;
-    let body2 = *bodies
-        .get(&joint.child)
-        .with_context(|| format!("joint '{}' has unknown child body '{}'", joint.id, joint.child))?;
+    let body1 = *bodies.get(&joint.parent).with_context(|| {
+        format!(
+            "joint '{}' has unknown parent body '{}'",
+            joint.id, joint.parent
+        )
+    })?;
+    let body2 = *bodies.get(&joint.child).with_context(|| {
+        format!(
+            "joint '{}' has unknown child body '{}'",
+            joint.id, joint.child
+        )
+    })?;
 
     let anchors = (
         Vec3::from_array(joint.anchor_parent_m),
@@ -325,14 +367,19 @@ fn spawn_joint(
                 .map(Vec3::from_array)
                 .context("hinge joint is missing axis_local")?
                 .normalize_or_zero();
-            ensure!(axis.length_squared() > 0.0, "hinge '{}' has a zero-length axis", joint.id);
+            ensure!(
+                axis.length_squared() > 0.0,
+                "hinge '{}' has a zero-length axis",
+                joint.id
+            );
 
             let mut constraint = RevoluteJoint::new(body1, body2)
                 .with_hinge_axis(axis)
                 .with_local_anchor1(anchors.0)
                 .with_local_anchor2(anchors.1);
             if let Some([minimum, maximum]) = limits.and_then(|ranges| ranges.first()).copied() {
-                constraint = constraint.with_angle_limits(minimum.to_radians(), maximum.to_radians());
+                constraint =
+                    constraint.with_angle_limits(minimum.to_radians(), maximum.to_radians());
             }
             commands.spawn((
                 Name::new(name),

@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::sprite::Anchor;
 
 use crate::camera::FreeFlyCamera;
 
@@ -13,10 +14,10 @@ enum StudioCalloutAction {
 }
 
 #[derive(Component)]
-struct StudioHint;
+pub(super) struct StudioHint;
 
 #[derive(Component)]
-struct StudioCallout {
+pub(super) struct StudioCallout {
     action: StudioCalloutAction,
     hit_extent: Vec2,
 }
@@ -78,24 +79,16 @@ pub(super) fn ensure_studio_callouts(
             .iter()
             .any(|callout| same_callout_action(&callout.action, &action));
         if !exists {
-            spawn_studio_callout(
-                &mut commands,
-                camera,
-                action,
-                label,
-                position,
-                hit_extent,
-            );
+            spawn_studio_callout(&mut commands, camera, action, label, position, hit_extent);
         }
     }
 }
 
 fn same_callout_action(first: &StudioCalloutAction, second: &StudioCalloutAction) -> bool {
     match (first, second) {
-        (
-            StudioCalloutAction::SelectMode(first),
-            StudioCalloutAction::SelectMode(second),
-        ) => first == second,
+        (StudioCalloutAction::SelectMode(first), StudioCalloutAction::SelectMode(second)) => {
+            first == second
+        }
         (
             StudioCalloutAction::Command(MenuAction::CreateSpecies),
             StudioCalloutAction::Command(MenuAction::CreateSpecies),
@@ -109,12 +102,13 @@ fn same_callout_action(first: &StudioCalloutAction, second: &StudioCalloutAction
 }
 
 fn spawn_studio_hint(commands: &mut Commands, camera: Entity) {
-    let mut hint = commands.spawn((
-        Name::new("Mesh modeling keyboard hints"),
-        StudioHint,
-        Transform::from_xyz(0.0, -1.58, -3.0),
-    ));
-    hint.with_children(|parent| {
+    let hint = commands
+        .spawn((
+            Name::new("Mesh modeling keyboard hints"),
+            StudioHint,
+            Transform::from_xyz(0.0, -1.58, -3.0),
+        ))
+        .with_children(|parent| {
         for offset in [
             Vec3::new(-0.025, 0.0, -0.025),
             Vec3::new(0.025, 0.0, -0.025),
@@ -122,22 +116,23 @@ fn spawn_studio_hint(commands: &mut Commands, camera: Entity) {
             Vec3::new(0.0, 0.025, -0.025),
         ] {
             parent.spawn((
-                Text2d::new("SHIFT+CLICK MULTI   ARROWS GRID MOVE   PGUP/DN NORMAL   DEL DELETE   E EDGE   F FACE   TAB NEXT"),
+                Text2d::new("CTRL+Z UNDO   CTRL+Y / CTRL+SHIFT+Z REDO\nSHIFT+CLICK MULTI   ARROWS GRID MOVE   PGUP/DN NORMAL   DEL DELETE   E EDGE   F FACE   TAB NEXT"),
                 TextFont::from_font_size(17.0),
                 TextColor(Color::BLACK),
-                Anchor::Center,
+                Anchor::CENTER,
                 Transform::from_translation(offset),
             ));
         }
         parent.spawn((
-            Text2d::new("SHIFT+CLICK MULTI   ARROWS GRID MOVE   PGUP/DN NORMAL   DEL DELETE   E EDGE   F FACE   TAB NEXT"),
+            Text2d::new("CTRL+Z UNDO   CTRL+Y / CTRL+SHIFT+Z REDO\nSHIFT+CLICK MULTI   ARROWS GRID MOVE   PGUP/DN NORMAL   DEL DELETE   E EDGE   F FACE   TAB NEXT"),
             TextFont::from_font_size(17.0),
             TextColor(Color::WHITE),
-            Anchor::Center,
+            Anchor::CENTER,
             Transform::from_xyz(0.0, 0.0, 0.025),
         ));
-    });
-    commands.entity(camera).add_child(hint.id());
+        })
+        .id();
+    commands.entity(camera).add_child(hint);
 }
 
 fn spawn_studio_callout(
@@ -148,39 +143,45 @@ fn spawn_studio_callout(
     position: Vec3,
     hit_extent: Vec2,
 ) {
-    let font_size = if label.starts_with("CREATE") { 36.0 } else { 32.0 };
-    let mut callout = commands.spawn((
-        Name::new(format!("{label} annotation")),
-        StudioCallout { action, hit_extent },
-        Transform::from_translation(position),
-    ));
-    callout.with_children(|parent| {
-        for offset in [
-            Vec3::new(-0.04, 0.0, -0.03),
-            Vec3::new(0.04, 0.0, -0.03),
-            Vec3::new(0.0, -0.04, -0.03),
-            Vec3::new(0.0, 0.04, -0.03),
-            Vec3::new(-0.03, -0.03, -0.03),
-            Vec3::new(0.03, 0.03, -0.03),
-        ] {
+    let font_size = if label.starts_with("CREATE") {
+        36.0
+    } else {
+        32.0
+    };
+    let callout = commands
+        .spawn((
+            Name::new(format!("{label} annotation")),
+            StudioCallout { action, hit_extent },
+            Transform::from_translation(position),
+        ))
+        .with_children(|parent| {
+            for offset in [
+                Vec3::new(-0.04, 0.0, -0.03),
+                Vec3::new(0.04, 0.0, -0.03),
+                Vec3::new(0.0, -0.04, -0.03),
+                Vec3::new(0.0, 0.04, -0.03),
+                Vec3::new(-0.03, -0.03, -0.03),
+                Vec3::new(0.03, 0.03, -0.03),
+            ] {
+                parent.spawn((
+                    Text2d::new(label),
+                    TextFont::from_font_size(font_size),
+                    TextColor(Color::BLACK),
+                    Anchor::CENTER,
+                    Transform::from_translation(offset),
+                ));
+            }
             parent.spawn((
                 Text2d::new(label),
                 TextFont::from_font_size(font_size),
-                TextColor(Color::BLACK),
-                Anchor::Center,
-                Transform::from_translation(offset),
+                TextColor(Color::WHITE),
+                Anchor::CENTER,
+                Transform::from_xyz(0.0, 0.0, 0.025),
             ));
-        }
-        parent.spawn((
-            Text2d::new(label),
-            TextFont::from_font_size(font_size),
-            TextColor(Color::WHITE),
-            Anchor::Center,
-            Transform::from_xyz(0.0, 0.0, 0.025),
-        ));
-    });
+        })
+        .id();
 
-    commands.entity(camera).add_child(callout.id());
+    commands.entity(camera).add_child(callout);
 }
 
 pub(super) fn interact_callouts(
