@@ -1,0 +1,98 @@
+name: Portable Windows Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    name: Validate and package Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C target-feature=+crt-static"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache Cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64-portable
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Type-check all targets
+        run: cargo check --locked --all-targets --target x86_64-pc-windows-msvc -j 1
+
+      - name: Run tests
+        run: cargo test --locked --all-targets --target x86_64-pc-windows-msvc -j 1
+
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -j 1 -- -D warnings
+
+      - name: Build portable folder and ZIP
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - name: Verify portable archive contents
+        shell: pwsh
+        run: |
+          $Archive = "dist/physics-sandbox-windows-x64.zip"
+          if (-not (Test-Path -LiteralPath $Archive -PathType Leaf)) {
+              throw "Portable archive was not created."
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $Zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $Archive))
+          try {
+              $Names = $Zip.Entries.FullName
+              foreach ($Required in @(
+                  "physics_sandbox.exe",
+                  "Physics Sandbox.cmd",
+                  "README-PORTABLE.txt",
+                  "data/engine.json",
+                  "data/materials.json",
+                  "data/components.json",
+                  "assets/ui/main_menu.json",
+                  "worlds/sandbox/world.json"
+              )) {
+                  if ($Names -notcontains $Required) {
+                      throw "Portable archive is missing '$Required'."
+                  }
+              }
+          }
+          finally {
+              $Zip.Dispose()
+          }
+
+      - name: Upload portable Windows x64 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: physics-sandbox-windows-x64
+          path: |
+            dist/physics-sandbox-windows-x64.zip
+            dist/physics-sandbox-windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

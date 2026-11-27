@@ -9,8 +9,9 @@ use bevy::prelude::*;
 
 use crate::{
     config::{BodyType, RuntimeConfig},
+    engine::AppMode,
     physics::DestructionJournal,
-    ui::MenuState,
+    ui::{MenuFeedback, MenuFeedbackTone},
 };
 
 #[derive(Component, Clone, Debug)]
@@ -34,6 +35,10 @@ pub struct WorldSaveTarget {
     pub state_path: PathBuf,
 }
 
+fn can_save_world(mode: AppMode, f5_pressed: bool) -> bool {
+    mode == AppMode::Simulation && f5_pressed
+}
+
 fn known_static_world_object_ids(config: &RuntimeConfig) -> HashSet<String> {
     config
         .world
@@ -54,7 +59,7 @@ pub struct PersistencePlugin;
 
 impl Plugin for PersistencePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<MenuFeedback>().add_systems(
             Update,
             save_world_on_f5.after(crate::world::ChunkStreamingUpdateSet),
         );
@@ -65,8 +70,9 @@ impl Plugin for PersistencePlugin {
 #[allow(clippy::too_many_arguments)]
 fn save_world_on_f5(
     keys: Res<ButtonInput<KeyCode>>,
-    menu: Res<MenuState>,
+    mode: Res<State<AppMode>>,
     target: Res<WorldSaveTarget>,
+    mut menu_feedback: ResMut<MenuFeedback>,
     config: Res<RuntimeConfig>,
     previous_state: Res<WorldStateFile>,
     destruction_journal: Res<DestructionJournal>,
@@ -87,7 +93,8 @@ fn save_world_on_f5(
         &AngularVelocity,
     )>,
 ) {
-    if menu.visible || !keys.just_pressed(KeyCode::F5) {
+    // Pausing keeps the app in Simulation, so F5 also works from the pause and quit dialogs.
+    if !can_save_world(*mode.get(), keys.just_pressed(KeyCode::F5)) {
         return;
     }
 
@@ -136,23 +143,44 @@ fn save_world_on_f5(
     }
 
     match snapshot.write_atomic(&target.state_path) {
-        Ok(()) => info!(
-            "Saved {} dynamic body states, {} fragments and {} damage records to '{}'",
-            snapshot.bodies.len(),
-            snapshot.fragments.len(),
-            snapshot.fractured.len() + snapshot.broken_bonds.len(),
-            target.state_path.display()
-        ),
-        Err(error) => error!(
-            "Could not save world state to '{}': {error:#}",
-            target.state_path.display()
-        ),
+        Ok(()) => {
+            let message = format!(
+                "Saved {} body states and {} fragments.",
+                snapshot.bodies.len(),
+                snapshot.fragments.len()
+            );
+            info!(
+                "{message} {} damage records saved to '{}'",
+                snapshot.fractured.len() + snapshot.broken_bonds.len(),
+                target.state_path.display()
+            );
+            menu_feedback.message = message;
+            menu_feedback.tone = MenuFeedbackTone::Success;
+        }
+        Err(error) => {
+            error!(
+                "Could not save world state to '{}': {error:#}",
+                target.state_path.display()
+            );
+            menu_feedback.message =
+                "Save failed. Check the application log for the error details.".to_owned();
+            menu_feedback.tone = MenuFeedbackTone::Notice;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{PersistedBodyState, WorldStateFile};
+
+    #[test]
+    fn f5_save_is_available_in_simulation_but_not_in_world_library() {
+        use crate::engine::AppMode;
+
+        assert!(super::can_save_world(AppMode::Simulation, true));
+        assert!(!super::can_save_world(AppMode::Simulation, false));
+        assert!(!super::can_save_world(AppMode::WorldLibrary, true));
+    }
 
     #[test]
     fn save_snapshot_can_preserve_dynamic_states_for_unloaded_chunks() {

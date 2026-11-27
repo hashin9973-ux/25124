@@ -114,21 +114,66 @@ impl RuntimeConfig {
                 }
             }
 
-            selected.with_context(|| {
-                if load_errors.is_empty() {
-                    "no valid worlds were found beneath the worlds directory".to_owned()
-                } else {
-                    format!(
-                        "no world could be loaded for library bootstrap. Candidates failed: {}",
-                        load_errors.join("; ")
-                    )
-                }
-            })?
+            if !load_errors.is_empty() {
+                bevy::log::warn!(
+                    "No valid world could bootstrap the library. Candidates failed: {}",
+                    load_errors.join("; ")
+                );
+            }
+
+            match selected {
+                Some(config) => config,
+                None => Self::load_library_bootstrap(data_dir, assets_dir)?,
+            }
         };
 
         config.paths.project_root = root;
         config.start_in_library = start_in_library;
         Ok(Some(config))
+    }
+
+    /// Loads shared engine/content settings without requiring a world manifest.
+    /// This keeps the world library available when the project has no worlds yet.
+    fn load_library_bootstrap(data_dir: PathBuf, assets_dir: PathBuf) -> Result<Self> {
+        let engine: EngineSettings = read_json(&data_dir.join("engine.json"))?;
+        let materials: MaterialCatalog = read_json(&data_dir.join("materials.json"))?;
+        let components: ComponentCatalog = read_json(&data_dir.join("components.json"))?;
+        let world = WorldManifest {
+            schema_version: 1,
+            id: "__world_library__".to_owned(),
+            name: "World Library".to_owned(),
+            description: String::new(),
+            preview_asset: None,
+            metadata: BTreeMap::new(),
+            gravity_m_s2: None,
+            regions: Vec::new(),
+            objects: Vec::new(),
+        };
+        let chunks = Vec::new();
+        validate_all(&engine, &materials, &components, &world, &chunks)
+            .context("shared project configuration validation failed")?;
+        let project_root = data_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        Ok(Self {
+            engine,
+            materials,
+            components,
+            world,
+            chunks,
+            object_chunks: Vec::new(),
+            paths: ProjectPaths {
+                project_root: project_root.clone(),
+                data_dir,
+                assets_dir,
+                world_state: project_root
+                    .join("worlds")
+                    .join(".library-bootstrap-state.json"),
+            },
+            start_in_library: true,
+        })
     }
 
     pub fn load(
@@ -416,6 +461,28 @@ mod tests {
     use std::path::Path;
 
     use crate::config::RuntimeConfig;
+
+    #[test]
+    fn library_bootstrap_loads_shared_settings_without_a_world_manifest() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let config = RuntimeConfig::load_library_bootstrap(
+            root.join("data"),
+            root.join("assets"),
+        )
+        .expect("shared project configuration should validate");
+
+        assert_eq!(config.world.id, "__world_library__");
+        assert!(config.world.objects.is_empty());
+        assert!(config.chunks.is_empty());
+        assert!(config.object_chunks.is_empty());
+        assert!(config.start_in_library);
+        assert!(
+            config
+                .paths
+                .world_state
+                .ends_with("worlds/.library-bootstrap-state.json")
+        );
+    }
 
     #[test]
     fn checked_in_configuration_loads_region_indexes_without_loading_chunk_bodies() {

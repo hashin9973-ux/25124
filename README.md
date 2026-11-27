@@ -138,10 +138,18 @@ cargo clippy --locked --all-targets -- -D warnings
 
 The committed `Cargo.lock` pins the dependency graph. Keep it under version control and update it deliberately.
 
-A Windows portable release can be assembled with:
+A Windows x64 portable release can be assembled from a Windows machine with the MSVC C++ build tools and Windows SDK installed:
 
 ```powershell
 ./scripts/package.ps1
 ```
 
-The package script copies the executable and complete `data/`, `assets/`, `mods/`, and `worlds/` trees.
+The script builds `x86_64-pc-windows-msvc` in Release mode with a statically linked MSVC C runtime, then creates:
+
+- `dist/physics-sandbox-windows-x64/` — unpacked portable folder.
+- `dist/physics-sandbox-windows-x64.zip` — distributable archive.
+- `dist/physics-sandbox-windows-x64.zip.sha256` — SHA-256 checksum.
+
+The package contains `physics_sandbox.exe`, a `Physics Sandbox.cmd` launcher, portable instructions, and the complete `data/`, `assets/`, optional `mods/`, and `worlds/` trees. Windows and compatible GPU drivers remain host requirements.
+
+The `Portable Windows Build` GitHub Actions workflow runs formatting, locked checks, tests, Clippy, package creation, and archive-content verification, then uploads the ZIP and checksum as a workflow artifact.

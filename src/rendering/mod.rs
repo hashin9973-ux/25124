@@ -6,7 +6,8 @@ pub struct RenderingPlugin;
 
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_key_light);
+        app.add_systems(Startup, setup_key_light)
+            .add_systems(Update, sync_key_light);
     }
 }
 
@@ -25,4 +26,26 @@ fn setup_key_light(mut commands: Commands, config: Res<RuntimeConfig>) {
             rotation[2].to_radians(),
         )),
     ));
+}
+
+fn sync_key_light(
+    config: Res<RuntimeConfig>,
+    mut lights: Query<(&mut DirectionalLight, &mut Transform)>,
+) {
+    if !config.is_changed() {
+        return;
+    }
+
+    let settings = &config.engine.rendering;
+    let rotation = settings.key_light_rotation_degrees_xyz;
+    for (mut light, mut transform) in &mut lights {
+        light.illuminance = settings.key_light_illuminance_lux;
+        light.shadow_maps_enabled = settings.shadows_enabled;
+        transform.rotation = Quat::from_euler(
+            EulerRot::XYZ,
+            rotation[0].to_radians(),
+            rotation[1].to_radians(),
+            rotation[2].to_radians(),
+        );
+    }
 }

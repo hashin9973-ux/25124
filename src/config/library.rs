@@ -72,9 +72,21 @@ impl WorldLibrary {
     /// Unreadable or malformed entries are skipped so one bad world cannot hide the others.
     pub fn discover(project_root: &Path) -> Result<Self> {
         let worlds_dir = project_root.join("worlds");
+        if !worlds_dir
+            .try_exists()
+            .with_context(|| format!("could not inspect '{}'", worlds_dir.display()))?
+        {
+            return Ok(Self {
+                entries: Vec::new(),
+                warnings: vec![format!(
+                    "world library directory '{}' does not exist; starting with an empty library",
+                    worlds_dir.display()
+                )],
+            });
+        }
         ensure!(
             worlds_dir.is_dir(),
-            "world library directory '{}' does not exist",
+            "world library path '{}' exists but is not a directory",
             worlds_dir.display()
         );
 
@@ -255,6 +267,18 @@ mod tests {
         assert_eq!(library.entries.len(), 1);
         assert!(library.entries[0].preview_asset.is_none());
         assert_eq!(library.warnings.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_world_directory_is_treated_as_an_empty_library() {
+        let root = temp_root("missing-worlds");
+        fs::create_dir_all(&root).unwrap();
+
+        let library = WorldLibrary::discover(&root).unwrap();
+        assert!(library.entries.is_empty());
+        assert_eq!(library.warnings.len(), 1);
+
         fs::remove_dir_all(root).unwrap();
     }
 

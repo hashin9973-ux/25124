@@ -1,69 +1,69 @@
 {
   "schema_version": 2,
-  "title": "WORLD LIBRARY",
-  "subtitle": "SELECT A WORLD TO LOAD",
+  "title": "25124",
+  "subtitle": "PHYSICS SANDBOX  /  WORLD SELECT",
   "background_srgba": [
-    0.012,
-    0.02,
-    0.032,
-    0.96
+    0.008,
+    0.014,
+    0.026,
+    0.97
   ],
   "panel_srgba": [
-    0.045,
-    0.065,
-    0.09,
-    0.98
+    0.025,
+    0.043,
+    0.066,
+    0.99
   ],
   "title_srgba": [
-    0.9,
-    0.95,
+    0.91,
+    0.96,
     1,
     1
   ],
   "subtitle_srgba": [
     0.48,
-    0.66,
-    0.78,
+    0.68,
+    0.75,
     1
   ],
   "button_srgba": [
-    0.09,
-    0.17,
-    0.24,
+    0.055,
+    0.105,
+    0.14,
     1
   ],
   "button_hover_srgba": [
-    0.15,
-    0.32,
-    0.43,
+    0.075,
+    0.25,
+    0.29,
     1
   ],
   "button_text_srgba": [
-    0.92,
+    0.91,
     0.97,
-    1,
+    0.98,
     1
   ],
-  "panel_width_px": 560,
-  "panel_padding_px": 44,
-  "vertical_gap_px": 16,
-  "title_size_px": 34,
-  "subtitle_size_px": 13,
-  "button_width_px": 360,
-  "button_height_px": 54,
+  "panel_width_px": 900,
+  "panel_padding_px": 30,
+  "vertical_gap_px": 14,
+  "title_size_px": 38,
+  "subtitle_size_px": 14,
+  "button_width_px": 500,
+  "button_height_px": 52,
   "button_font_size_px": 16,
-  "world_card_height_px": 116,
+  "world_card_height_px": 126,
   "world_card_gap_px": 12,
-  "world_preview_size_px": 84,
-  "world_description_size_px": 11,
-  "world_metadata_size_px": 9,
-  "world_empty_description_text": "No description supplied.",
+  "world_preview_size_px": 92,
+  "world_description_size_px": 13,
+  "world_metadata_size_px": 11,
+  "world_empty_description_text": "A quiet space waiting for its first experiment.",
   "world_preview_fallback_label": "WORLD",
   "world_preview_version_prefix": "V",
   "world_format_label": "FORMAT",
   "world_regions_label": "REGIONS",
   "world_objects_label": "OBJECTS",
-  "world_metadata_max_fields": 3,
+  "world_metadata_max_fields": 4,
   "buttons": [
     {
       "label": "RESUME",
@@ -73,5 +73,80 @@
       "label": "QUIT",
       "action": "quit"
     }
-  ]
+  ],
+  "panel_border_srgba": [
+    0.18,
+    0.34,
+    0.39,
+    0.72
+  ],
+  "button_border_srgba": [
+    0.16,
+    0.31,
+    0.36,
+    0.78
+  ],
+  "button_active_border_srgba": [
+    0.28,
+    0.78,
+    0.77,
+    1
+  ],
+  "panel_radius_px": 18,
+  "card_radius_px": 12,
+  "empty_library_title": "YOUR WORLD LIBRARY IS EMPTY",
+  "empty_library_hint": "Add a world manifest at worlds/<name>/world.json to get started.",
+  "panel_shadow_srgba": [
+    0,
+    0,
+    0,
+    0.48
+  ],
+  "panel_shadow_blur_px": 30,
+  "panel_shadow_offset_y_px": 12,
+  "quit_confirm_title": "UNSAVED SIMULATION",
+  "quit_confirm_message": "Changes since your last F5 save will be lost. Press F5 here to save before confirming.",
+  "quit_confirm_label": "QUIT ANYWAY",
+  "quit_cancel_label": "KEEP PLAYING",
+  "danger_button_srgba": [
+    0.31,
+    0.075,
+    0.095,
+    1
+  ],
+  "danger_button_hover_srgba": [
+    0.48,
+    0.105,
+    0.14,
+    1
+  ],
+  "library_navigation_hint": "TAB / SHIFT+TAB NAVIGATE   ·   ENTER SELECT",
+  "pause_controls_hint": "HOLD RMB TO LOOK  ·  WASD MOVE  ·  SHIFT SPRINT  ·  SPACE/CTRL VERTICAL\nTAB NAVIGATE  ·  ENTER ACTIVATE  ·  ESC RESUME  ·  F5 SAVE",
+  "modal_backdrop_srgba": [
+    0.004,
+    0.008,
+    0.016,
+    0.88
+  ],
+  "notice_srgba": [
+    0.95,
+    0.68,
+    0.32,
+    1
+  ],
+  "library_warning_srgba": [
+    0.94,
+    0.7,
+    0.34,
+    1
+  ],
+  "success_srgba": [
+    0.28,
+    0.78,
+    0.65,
+    1
+  ],
+  "pause_title": "SIMULATION PAUSED",
+  "world_count_template": "{count} WORLDS AVAILABLE",
+  "library_warning_template": "{count} LIBRARY NOTICE(S) — Some entries or previews were skipped. See the application log."
 }

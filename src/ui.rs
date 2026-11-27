@@ -1,11 +1,16 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
 use bevy::{
     app::AppExit,
-    picking::hover::Hovered,
+    input_focus::{
+        FocusCause, InputFocus, InputFocusVisible,
+        tab_navigation::{TabGroup, TabIndex, TabNavigationPlugin},
+    },
+    input::mouse::{MouseScrollUnit, MouseWheel},
+    picking::hover::{HoverMap, Hovered},
     prelude::*,
     text::{FontSize, TextFont},
     ui::Pressed,
@@ -25,46 +30,22 @@ pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MenuState>()
+        app.add_plugins(TabNavigationPlugin)
+            .init_resource::<MenuState>()
+            .init_resource::<MenuFeedback>()
+            .init_resource::<QuitConfirmationState>()
             .add_systems(Startup, setup_menu)
-            .add_systems(Startup, inspect_menu_runtime.after(setup_menu))
             .add_systems(
                 Update,
                 (
                     toggle_menu_with_escape,
                     update_button_styles,
                     sync_menu_visibility,
+                    update_world_list_scroll,
+                    sync_menu_feedback,
+                    sync_quit_confirmation_visibility,
                 ),
             );
-    }
-}
-
-fn inspect_menu_runtime(
-    roots: Query<&Visibility, With<MenuRoot>>,
-    library_panels: Query<&Visibility, With<LibraryOnly>>,
-    pause_panels: Query<&Visibility, With<SimulationOnly>>,
-    buttons: Query<Entity, With<Button>>,
-    cameras: Query<(Entity, &Camera), With<Camera3d>>,
-) {
-    info!(
-        "Menu ECS probe: roots={}, library_panels={}, pause_panels={}, buttons={}, cameras={}",
-        roots.iter().count(),
-        library_panels.iter().count(),
-        pause_panels.iter().count(),
-        buttons.iter().count(),
-        cameras.iter().count(),
-    );
-    for (entity, camera) in &cameras {
-        info!(
-            "Menu ECS probe: camera={entity:?}, active={}",
-            camera.is_active
-        );
-    }
-    for visibility in &roots {
-        info!("Menu ECS probe: root visibility={visibility:?}");
-    }
-    for visibility in &library_panels {
-        info!("Menu ECS probe: library visibility={visibility:?}");
     }
 }
 
@@ -73,8 +54,42 @@ pub(crate) struct MenuState {
     pub(crate) visible: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum MenuFeedbackTone {
+    #[default]
+    Notice,
+    Success,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct MenuFeedback {
+    pub(crate) message: String,
+    pub(crate) tone: MenuFeedbackTone,
+}
+
+#[derive(Resource, Default)]
+struct QuitConfirmationState {
+    visible: bool,
+    return_focus: Option<Entity>,
+}
+
 #[derive(Component)]
 struct MenuRoot;
+
+#[derive(Component)]
+struct WorldList;
+
+#[derive(Component)]
+struct MenuNotice;
+
+#[derive(Component, Clone, Copy)]
+struct MenuNoticeColors {
+    notice: Color,
+    success: Color,
+}
+
+#[derive(Component)]
+struct QuitConfirmationPanel;
 
 #[derive(Component)]
 struct MenuAction(String);
@@ -89,6 +104,8 @@ struct SimulationOnly;
 struct MenuButtonColors {
     normal: Color,
     hovered: Color,
+    border_normal: Color,
+    border_active: Color,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -97,6 +114,36 @@ struct MenuAsset {
     schema_version: u32,
     title: String,
     subtitle: String,
+    #[serde(default = "default_empty_library_title")]
+    empty_library_title: String,
+    #[serde(default = "default_empty_library_hint")]
+    empty_library_hint: String,
+    #[serde(default = "default_quit_confirm_title")]
+    quit_confirm_title: String,
+    #[serde(default = "default_quit_confirm_message")]
+    quit_confirm_message: String,
+    #[serde(default = "default_quit_confirm_label")]
+    quit_confirm_label: String,
+    #[serde(default = "default_quit_cancel_label")]
+    quit_cancel_label: String,
+    #[serde(default = "default_library_navigation_hint")]
+    library_navigation_hint: String,
+    #[serde(default = "default_pause_controls_hint")]
+    pause_controls_hint: String,
+    #[serde(default = "default_pause_title")]
+    pause_title: String,
+    #[serde(default = "default_world_count_template")]
+    world_count_template: String,
+    #[serde(default = "default_library_warning_template")]
+    library_warning_template: String,
+    #[serde(default = "default_modal_backdrop_srgba")]
+    modal_backdrop_srgba: [f32; 4],
+    #[serde(default = "default_notice_srgba")]
+    notice_srgba: [f32; 4],
+    #[serde(default = "default_success_srgba")]
+    success_srgba: [f32; 4],
+    #[serde(default = "default_library_warning_srgba")]
+    library_warning_srgba: [f32; 4],
     background_srgba: [f32; 4],
     panel_srgba: [f32; 4],
     title_srgba: [f32; 4],
@@ -104,6 +151,22 @@ struct MenuAsset {
     button_srgba: [f32; 4],
     button_hover_srgba: [f32; 4],
     button_text_srgba: [f32; 4],
+    #[serde(default = "default_panel_border_srgba")]
+    panel_border_srgba: [f32; 4],
+    #[serde(default = "default_panel_shadow_srgba")]
+    panel_shadow_srgba: [f32; 4],
+    #[serde(default = "default_panel_shadow_blur_px")]
+    panel_shadow_blur_px: f32,
+    #[serde(default = "default_panel_shadow_offset_y_px")]
+    panel_shadow_offset_y_px: f32,
+    #[serde(default = "default_button_border_srgba")]
+    button_border_srgba: [f32; 4],
+    #[serde(default = "default_button_active_border_srgba")]
+    button_active_border_srgba: [f32; 4],
+    #[serde(default = "default_danger_button_srgba")]
+    danger_button_srgba: [f32; 4],
+    #[serde(default = "default_danger_button_hover_srgba")]
+    danger_button_hover_srgba: [f32; 4],
     panel_width_px: f32,
     panel_padding_px: f32,
     vertical_gap_px: f32,
@@ -136,7 +199,113 @@ struct MenuAsset {
     world_objects_label: String,
     #[serde(default = "default_world_metadata_max_fields")]
     world_metadata_max_fields: usize,
+    #[serde(default = "default_panel_radius_px")]
+    panel_radius_px: f32,
+    #[serde(default = "default_card_radius_px")]
+    card_radius_px: f32,
     buttons: Vec<MenuButtonDefinition>,
+}
+
+fn default_empty_library_title() -> String {
+    "YOUR WORLD LIBRARY IS EMPTY".to_owned()
+}
+
+fn default_empty_library_hint() -> String {
+    "Add a world manifest at worlds/<name>/world.json to get started.".to_owned()
+}
+
+fn default_quit_confirm_title() -> String {
+    "UNSAVED SIMULATION".to_owned()
+}
+
+fn default_quit_confirm_message() -> String {
+    "Changes since your last F5 save will be lost. Choose Keep Playing to resume and save before quitting."
+        .to_owned()
+}
+
+fn default_quit_confirm_label() -> String {
+    "QUIT ANYWAY".to_owned()
+}
+
+fn default_quit_cancel_label() -> String {
+    "KEEP PLAYING".to_owned()
+}
+
+fn default_library_navigation_hint() -> String {
+    "TAB / SHIFT+TAB NAVIGATE   ·   ENTER SELECT".to_owned()
+}
+
+fn default_pause_controls_hint() -> String {
+    "HOLD RMB TO LOOK  ·  WASD MOVE  ·  SHIFT SPRINT  ·  SPACE/CTRL VERTICAL\nTAB NAVIGATE  ·  ENTER ACTIVATE  ·  ESC RESUME  ·  F5 SAVE".to_owned()
+}
+
+fn default_pause_title() -> String {
+    "SIMULATION PAUSED".to_owned()
+}
+
+fn default_world_count_template() -> String {
+    "{count} WORLDS AVAILABLE".to_owned()
+}
+
+fn default_library_warning_template() -> String {
+    "{count} LIBRARY NOTICE(S) — Some entries or previews were skipped. See the application log."
+        .to_owned()
+}
+
+fn default_modal_backdrop_srgba() -> [f32; 4] {
+    [0.004, 0.008, 0.016, 0.88]
+}
+
+fn default_notice_srgba() -> [f32; 4] {
+    [0.95, 0.68, 0.32, 1.0]
+}
+
+fn default_success_srgba() -> [f32; 4] {
+    [0.28, 0.78, 0.65, 1.0]
+}
+
+fn default_library_warning_srgba() -> [f32; 4] {
+    [0.94, 0.70, 0.34, 1.0]
+}
+
+fn default_panel_border_srgba() -> [f32; 4] {
+    [0.18, 0.34, 0.39, 0.72]
+}
+
+fn default_panel_shadow_srgba() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 0.48]
+}
+
+fn default_panel_shadow_blur_px() -> f32 {
+    30.0
+}
+
+fn default_panel_shadow_offset_y_px() -> f32 {
+    12.0
+}
+
+fn default_button_border_srgba() -> [f32; 4] {
+    [0.16, 0.31, 0.36, 0.78]
+}
+
+fn default_button_active_border_srgba() -> [f32; 4] {
+    [0.28, 0.78, 0.77, 1.0]
+}
+
+fn default_danger_button_srgba() -> [f32; 4] {
+    [0.31, 0.075, 0.095, 1.0]
+}
+
+fn default_danger_button_hover_srgba() -> [f32; 4] {
+    [0.48, 0.105, 0.14, 1.0]
+}
+
+fn default_panel_radius_px() -> f32 {
+    18.0
+}
+
+fn default_card_radius_px() -> f32 {
+    12.0
 }
 
 fn default_world_card_height_px() -> f32 {
@@ -195,6 +364,29 @@ struct MenuButtonDefinition {
 }
 
 impl MenuAsset {
+    fn fallback() -> Self {
+        let mut fallback: Self =
+            serde_json::from_str(include_str!("../assets/ui/main_menu.json"))
+            .expect("the embedded menu theme must be valid JSON");
+        fallback.ensure_required_actions();
+        fallback
+    }
+
+    fn ensure_required_actions(&mut self) {
+        if !self.buttons.iter().any(|button| button.action == "resume") {
+            self.buttons.push(MenuButtonDefinition {
+                label: "RESUME".to_owned(),
+                action: "resume".to_owned(),
+            });
+        }
+        if !self.buttons.iter().any(|button| button.action == "quit") {
+            self.buttons.push(MenuButtonDefinition {
+                label: "QUIT".to_owned(),
+                action: "quit".to_owned(),
+            });
+        }
+    }
+
     fn validate(&self) -> Result<(), String> {
         if !matches!(self.schema_version, 1 | 2) {
             return Err(format!(
@@ -212,6 +404,17 @@ impl MenuAsset {
             &self.world_format_label,
             &self.world_regions_label,
             &self.world_objects_label,
+            &self.empty_library_title,
+            &self.empty_library_hint,
+            &self.quit_confirm_title,
+            &self.quit_confirm_message,
+            &self.quit_confirm_label,
+            &self.quit_cancel_label,
+            &self.library_navigation_hint,
+            &self.pause_controls_hint,
+            &self.pause_title,
+            &self.world_count_template,
+            &self.library_warning_template,
         ];
         if presentation_labels
             .iter()
@@ -222,6 +425,11 @@ impl MenuAsset {
         if self.world_metadata_max_fields == 0 {
             return Err("world_metadata_max_fields must be greater than zero".to_owned());
         }
+        if !self.world_count_template.contains("{count}")
+            || !self.library_warning_template.contains("{count}")
+        {
+            return Err("world-count and library-warning templates must contain {count}".to_owned());
+        }
 
         let colors = [
             self.background_srgba,
@@ -231,6 +439,16 @@ impl MenuAsset {
             self.button_srgba,
             self.button_hover_srgba,
             self.button_text_srgba,
+            self.panel_border_srgba,
+            self.panel_shadow_srgba,
+            self.button_border_srgba,
+            self.button_active_border_srgba,
+            self.danger_button_srgba,
+            self.danger_button_hover_srgba,
+            self.modal_backdrop_srgba,
+            self.notice_srgba,
+            self.success_srgba,
+            self.library_warning_srgba,
         ];
         if !colors
             .iter()
@@ -261,10 +479,25 @@ impl MenuAsset {
         {
             return Err("menu dimensions and font sizes must be positive and finite".to_owned());
         }
+        if ![
+            self.panel_radius_px,
+            self.card_radius_px,
+            self.panel_shadow_blur_px,
+        ]
+        .iter()
+        .all(|value| value.is_finite() && *value >= 0.0)
+            || !self.panel_shadow_offset_y_px.is_finite()
+        {
+            return Err(
+                "panel/card radii and shadow blur must be non-negative; shadow offset must be finite"
+                    .to_owned(),
+            );
+        }
         if self.buttons.is_empty() {
             return Err("menu must define at least one button".to_owned());
         }
 
+        let mut actions = BTreeSet::new();
         for button in &self.buttons {
             if button.label.trim().is_empty() {
                 return Err("menu button labels cannot be empty".to_owned());
@@ -275,6 +508,12 @@ impl MenuAsset {
                     button.action
                 ));
             }
+            if !actions.insert(button.action.as_str()) {
+                return Err(format!("duplicate menu action '{}'", button.action));
+            }
+        }
+        if !actions.contains("resume") || !actions.contains("quit") {
+            return Err("menu must define both resume and quit actions".to_owned());
         }
         Ok(())
     }
@@ -286,6 +525,7 @@ fn setup_menu(
     config: Res<RuntimeConfig>,
     library: Res<WorldLibrary>,
     mut state: ResMut<MenuState>,
+    mut feedback: ResMut<MenuFeedback>,
     mut virtual_time: ResMut<Time<Virtual>>,
 ) {
     let menu_path = config.paths.assets_dir.join("ui/main_menu.json");
@@ -297,13 +537,20 @@ fn setup_menu(
         menu_path.display()
     );
     let menu = match load_menu(&menu_path) {
-        Ok(menu) => menu,
+        Ok(menu) => {
+            feedback.message.clear();
+            feedback.tone = MenuFeedbackTone::Notice;
+            menu
+        }
         Err(error) => {
             error!(
-                "Could not load menu presentation '{}': {error}.",
+                "Could not load menu presentation '{}': {error}. Using the built-in theme.",
                 menu_path.display()
             );
-            return;
+            feedback.message =
+                "The menu theme could not be loaded. The built-in theme is active.".to_owned();
+            feedback.tone = MenuFeedbackTone::Notice;
+            MenuAsset::fallback()
         }
     };
 
@@ -321,6 +568,18 @@ fn setup_menu(
     let button_color = color_from_srgba(menu.button_srgba);
     let button_hover_color = color_from_srgba(menu.button_hover_srgba);
     let button_text_color = color_from_srgba(menu.button_text_srgba);
+    let panel_border_color = color_from_srgba(menu.panel_border_srgba);
+    let panel_shadow_color = color_from_srgba(menu.panel_shadow_srgba);
+    let modal_backdrop_color = color_from_srgba(menu.modal_backdrop_srgba);
+    let notice_color = color_from_srgba(menu.notice_srgba);
+    let success_color = color_from_srgba(menu.success_srgba);
+    let notice_colors = MenuNoticeColors {
+        notice: notice_color,
+        success: success_color,
+    };
+    let library_warning_color = color_from_srgba(menu.library_warning_srgba);
+    let button_border_color = color_from_srgba(menu.button_border_srgba);
+    let button_active_border_color = color_from_srgba(menu.button_active_border_srgba);
     let root_visibility = if state.visible {
         Visibility::Visible
     } else {
@@ -349,16 +608,30 @@ fn setup_menu(
                 LibraryOnly,
                 Visibility::Visible,
                 Node {
-                    width: Val::Px(menu.panel_width_px),
-                    max_height: Val::Percent(90.0),
+                    width: Val::Percent(92.0),
+                    max_width: Val::Px(menu.panel_width_px),
+                    height: Val::Percent(88.0),
+                    max_height: Val::Percent(88.0),
+                    min_height: Val::Px(0.0),
                     padding: UiRect::all(Val::Px(menu.panel_padding_px)),
                     flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
+                    align_items: AlignItems::Stretch,
                     row_gap: Val::Px(menu.vertical_gap_px),
-                    overflow: Overflow::clip_y(),
+                    overflow: Overflow::hidden(),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(menu.panel_radius_px)),
                     ..default()
                 },
+                BorderColor::all(panel_border_color),
                 BackgroundColor(panel_color),
+                BoxShadow::new(
+                    panel_shadow_color,
+                    Val::Px(0.0),
+                    Val::Px(menu.panel_shadow_offset_y_px),
+                    Val::Px(0.0),
+                    Val::Px(menu.panel_shadow_blur_px),
+                ),
+                TabGroup::modal(),
             ))
             .with_children(|panel| {
                 panel.spawn((
@@ -377,19 +650,85 @@ fn setup_menu(
                     },
                     TextColor(subtitle_color),
                 ));
+                panel.spawn((
+                    Text::new(
+                        menu.world_count_template
+                            .replace("{count}", &library.entries.len().to_string()),
+                    ),
+                    TextFont {
+                        font_size: FontSize::Px(menu.world_metadata_size_px),
+                        ..default()
+                    },
+                    TextColor(subtitle_color),
+                ));
 
-                if library.entries.is_empty() {
+                if !library.warnings.is_empty() {
                     panel.spawn((
-                        Text::new("No worlds were found under the project's worlds directory."),
+                        Text::new(
+                            menu.library_warning_template
+                                .replace("{count}", &library.warnings.len().to_string()),
+                        ),
                         TextFont {
-                            font_size: FontSize::Px(menu.button_font_size_px),
+                            font_size: FontSize::Px(menu.world_metadata_size_px),
                             ..default()
                         },
-                        TextColor(subtitle_color),
+                        TextColor(library_warning_color),
                     ));
                 }
 
-                for world in &library.entries {
+                panel
+                    .spawn((
+                        WorldList,
+                        Node {
+                            width: Val::Percent(100.0),
+                            min_height: Val::Px(0.0),
+                            flex_grow: 1.0,
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(menu.world_card_gap_px),
+                            overflow: Overflow::scroll_y(),
+                            scrollbar_width: 7.0,
+                            ..default()
+                        },
+                        ScrollPosition::default(),
+                    ))
+                    .with_children(|world_list| {
+                if library.entries.is_empty() {
+                    world_list
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                padding: UiRect::all(Val::Px(24.0)),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::FlexStart,
+                                row_gap: Val::Px(10.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(menu.card_radius_px)),
+                                ..default()
+                            },
+                            BorderColor::all(panel_border_color),
+                            BackgroundColor(button_color),
+                        ))
+                        .with_children(|empty| {
+                            empty.spawn((
+                                Text::new(menu.empty_library_title.clone()),
+                                TextFont {
+                                    font_size: FontSize::Px(menu.button_font_size_px),
+                                    ..default()
+                                },
+                                TextColor(button_text_color),
+                            ));
+                            empty.spawn((
+                                Text::new(menu.empty_library_hint.clone()),
+                                TextFont {
+                                    font_size: FontSize::Px(menu.world_description_size_px),
+                                    ..default()
+                                },
+                                TextColor(subtitle_color),
+                            ));
+                        });
+                }
+
+                for (world_index, world) in library.entries.iter().enumerate() {
                     let preview = world
                         .preview_asset
                         .as_ref()
@@ -414,13 +753,16 @@ fn setup_menu(
                         menu.world_objects_label
                     );
 
-                    panel
+                    world_list
                         .spawn((
                             Button,
+                            TabIndex(world_index as i32),
                             Hovered::default(),
                             Node {
-                                width: Val::Px(menu.button_width_px),
+                                width: Val::Percent(100.0),
                                 min_height: Val::Px(menu.world_card_height_px),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(menu.card_radius_px)),
                                 padding: UiRect::all(Val::Px(12.0)),
                                 flex_direction: FlexDirection::Row,
                                 column_gap: Val::Px(menu.world_card_gap_px),
@@ -428,11 +770,14 @@ fn setup_menu(
                                 justify_content: JustifyContent::FlexStart,
                                 ..default()
                             },
+                            BorderColor::all(button_border_color),
                             BackgroundColor(button_color),
                             WorldSelection(world.manifest_path.clone()),
                             MenuButtonColors {
                                 normal: button_color,
                                 hovered: button_hover_color,
+                                border_normal: button_border_color,
+                                border_active: button_active_border_color,
                             },
                             observe(handle_world_selection),
                         ))
@@ -443,6 +788,7 @@ fn setup_menu(
                                     Node {
                                         width: Val::Px(menu.world_preview_size_px),
                                         height: Val::Px(menu.world_preview_size_px),
+                                        border_radius: BorderRadius::all(Val::Px(menu.card_radius_px)),
                                         flex_shrink: 0.0,
                                         ..default()
                                     },
@@ -453,6 +799,7 @@ fn setup_menu(
                                         Node {
                                             width: Val::Px(menu.world_preview_size_px),
                                             height: Val::Px(menu.world_preview_size_px),
+                                            border_radius: BorderRadius::all(Val::Px(menu.card_radius_px)),
                                             flex_shrink: 0.0,
                                             align_items: AlignItems::Center,
                                             justify_content: JustifyContent::Center,
@@ -530,23 +877,58 @@ fn setup_menu(
                         });
                 }
 
+                    });
+
+                panel.spawn((
+                    Text::new(menu.library_navigation_hint.clone()),
+                    TextFont {
+                        font_size: FontSize::Px(menu.world_metadata_size_px),
+                        ..default()
+                    },
+                    TextColor(subtitle_color),
+                ));
+
+                panel.spawn((
+                    MenuNotice,
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(menu.world_description_size_px),
+                        ..default()
+                    },
+                    TextColor(notice_color),
+                    notice_colors,
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(18.0),
+                        ..default()
+                    },
+                ));
+
                 if let Some(quit) = menu.buttons.iter().find(|button| button.action == "quit") {
                     panel
                         .spawn((
                             Button,
+                            TabIndex(library.entries.len() as i32),
                             Hovered::default(),
                             Node {
-                                width: Val::Px(menu.button_width_px),
+                                width: Val::Percent(100.0),
+                                max_width: Val::Px(menu.button_width_px),
+                                align_self: AlignSelf::Center,
                                 height: Val::Px(menu.button_height_px),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(menu.card_radius_px)),
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
                                 ..default()
                             },
+                            BorderColor::all(button_border_color),
                             BackgroundColor(button_color),
                             MenuAction(quit.action.clone()),
                             MenuButtonColors {
                                 normal: button_color,
                                 hovered: button_hover_color,
+                                border_normal: button_border_color,
+                                border_active: button_active_border_color,
                             },
                             observe(handle_menu_action),
                         ))
@@ -565,20 +947,32 @@ fn setup_menu(
 
             root.spawn((
                 SimulationOnly,
+                TabGroup::modal(),
                 Visibility::Hidden,
                 Node {
-                    width: Val::Px(menu.panel_width_px),
+                    width: Val::Percent(92.0),
+                    max_width: Val::Px(menu.panel_width_px),
                     padding: UiRect::all(Val::Px(menu.panel_padding_px)),
                     flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
+                    align_items: AlignItems::Stretch,
                     row_gap: Val::Px(menu.vertical_gap_px),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(menu.panel_radius_px)),
                     ..default()
                 },
+                BorderColor::all(panel_border_color),
                 BackgroundColor(panel_color),
+                BoxShadow::new(
+                    panel_shadow_color,
+                    Val::Px(0.0),
+                    Val::Px(menu.panel_shadow_offset_y_px),
+                    Val::Px(0.0),
+                    Val::Px(menu.panel_shadow_blur_px),
+                ),
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("SIMULATION PAUSED"),
+                    Text::new(menu.pause_title.clone()),
                     TextFont {
                         font_size: FontSize::Px(menu.title_size_px),
                         ..default()
@@ -586,7 +980,7 @@ fn setup_menu(
                     TextColor(title_color),
                 ));
                 panel.spawn((
-                    Text::new("Press Escape or choose Resume to continue"),
+                    Text::new(menu.pause_controls_hint.clone()),
                     TextFont {
                         font_size: FontSize::Px(menu.subtitle_size_px),
                         ..default()
@@ -594,27 +988,52 @@ fn setup_menu(
                     TextColor(subtitle_color),
                 ));
 
-                for definition in menu
+                panel.spawn((
+                    MenuNotice,
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(menu.world_description_size_px),
+                        ..default()
+                    },
+                    TextColor(notice_color),
+                    notice_colors,
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(18.0),
+                        ..default()
+                    },
+                ));
+
+                for (index, definition) in menu
                     .buttons
                     .iter()
                     .filter(|button| matches!(button.action.as_str(), "resume" | "quit"))
+                    .enumerate()
                 {
                     panel
                         .spawn((
                             Button,
+                            TabIndex(index as i32),
                             Hovered::default(),
                             Node {
-                                width: Val::Px(menu.button_width_px),
+                                width: Val::Percent(100.0),
+                                max_width: Val::Px(menu.button_width_px),
+                                align_self: AlignSelf::Center,
                                 height: Val::Px(menu.button_height_px),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(menu.card_radius_px)),
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
                                 ..default()
                             },
+                            BorderColor::all(button_border_color),
                             BackgroundColor(button_color),
                             MenuAction(definition.action.clone()),
                             MenuButtonColors {
                                 normal: button_color,
                                 hovered: button_hover_color,
+                                border_normal: button_border_color,
+                                border_active: button_active_border_color,
                             },
                             observe(handle_menu_action),
                         ))
@@ -629,6 +1048,138 @@ fn setup_menu(
                             ));
                         });
                 }
+            });
+
+            root.spawn((
+                QuitConfirmationPanel,
+                Visibility::Hidden,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    padding: UiRect::all(Val::Px(20.0)),
+                    ..default()
+                },
+                BackgroundColor(modal_backdrop_color),
+                TabGroup::modal(),
+            ))
+            .with_children(|overlay| {
+                overlay.spawn((
+                    Node {
+                        width: Val::Percent(92.0),
+                        max_width: Val::Px(560.0),
+                        padding: UiRect::all(Val::Px(menu.panel_padding_px)),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Stretch,
+                        row_gap: Val::Px(menu.vertical_gap_px),
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(menu.panel_radius_px)),
+                        ..default()
+                    },
+                    BorderColor::all(panel_border_color),
+                    BackgroundColor(panel_color),
+                    BoxShadow::new(
+                        panel_shadow_color,
+                        Val::Px(0.0),
+                        Val::Px(menu.panel_shadow_offset_y_px),
+                        Val::Px(0.0),
+                        Val::Px(menu.panel_shadow_blur_px),
+                    ),
+                ))
+                .with_children(|dialog| {
+                    dialog.spawn((
+                        Text::new(menu.quit_confirm_title.clone()),
+                        TextFont {
+                            font_size: FontSize::Px(menu.title_size_px),
+                            ..default()
+                        },
+                        TextColor(title_color),
+                    ));
+                    dialog.spawn((
+                        Text::new(menu.quit_confirm_message.clone()),
+                        TextFont {
+                            font_size: FontSize::Px(menu.subtitle_size_px),
+                            ..default()
+                        },
+                        TextColor(subtitle_color),
+                    ));
+
+                    dialog.spawn((
+                        MenuNotice,
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(menu.world_description_size_px),
+                            ..default()
+                        },
+                        TextColor(notice_color),
+                        notice_colors,
+                        Node {
+                            width: Val::Percent(100.0),
+                            min_height: Val::Px(18.0),
+                            ..default()
+                        },
+                    ));
+
+                    let danger_button_color = color_from_srgba(menu.danger_button_srgba);
+                    let danger_button_hover_color =
+                        color_from_srgba(menu.danger_button_hover_srgba);
+
+                    for (index, (label, action)) in [
+                        (menu.quit_cancel_label.clone(), "quit_cancel"),
+                        (menu.quit_confirm_label.clone(), "quit_confirm"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let (normal_color, hovered_color) = if action == "quit_confirm" {
+                            (danger_button_color, danger_button_hover_color)
+                        } else {
+                            (button_color, button_hover_color)
+                        };
+
+                        dialog
+                            .spawn((
+                                Button,
+                                TabIndex(index as i32),
+                                Hovered::default(),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    min_height: Val::Px(menu.button_height_px),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    border_radius: BorderRadius::all(Val::Px(menu.card_radius_px)),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                                BorderColor::all(button_border_color),
+                                BackgroundColor(normal_color),
+                                MenuAction(action.to_owned()),
+                                MenuButtonColors {
+                                    normal: normal_color,
+                                    hovered: hovered_color,
+                                    border_normal: button_border_color,
+                                    border_active: button_active_border_color,
+                                },
+                                observe(handle_menu_action),
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new(label),
+                                    TextFont {
+                                        font_size: FontSize::Px(menu.button_font_size_px),
+                                        ..default()
+                                    },
+                                    TextColor(button_text_color),
+                                ));
+                            });
+                    }
+                });
             });
         });
 }
@@ -649,6 +1200,8 @@ fn handle_world_selection(
     mut gravity: ResMut<Gravity>,
     mut next_state: ResMut<NextState<AppMode>>,
     mut menu_state: ResMut<MenuState>,
+    mut feedback: ResMut<MenuFeedback>,
+    mut input_focus: ResMut<InputFocus>,
     mut virtual_time: ResMut<Time<Virtual>>,
 ) {
     if *mode.get() != AppMode::WorldLibrary {
@@ -669,6 +1222,11 @@ fn handle_world_selection(
                 "Could not load selected world '{}': {error:#}",
                 selection.0.display()
             );
+            feedback.message = format!(
+                "Could not open '{}'. Check the application log for details.",
+                selection.0.display()
+            );
+            feedback.tone = MenuFeedbackTone::Notice;
             return;
         }
     };
@@ -682,6 +1240,11 @@ fn handle_world_selection(
                     "Could not load save state for world '{}': {error:#}",
                     selected.world.id
                 );
+                feedback.message = format!(
+                    "Could not load the save for '{}'. Check the application log for details.",
+                    selected.world.name
+                );
+                feedback.tone = MenuFeedbackTone::Notice;
                 return;
             }
         };
@@ -705,6 +1268,8 @@ fn handle_world_selection(
         .clone_from(&selected_state.damaged_bonds);
     *world_state = selected_state;
     *config = selected;
+    feedback.message.clear();
+    input_focus.clear();
 
     menu_state.visible = false;
     virtual_time.unpause();
@@ -718,32 +1283,127 @@ fn handle_world_selection(
 fn load_menu(path: &Path) -> Result<MenuAsset, String> {
     let source =
         std::fs::read_to_string(path).map_err(|error| format!("failed to read file: {error}"))?;
-    let menu: MenuAsset =
+    let mut menu: MenuAsset =
         serde_json::from_str(&source).map_err(|error| format!("invalid menu JSON: {error}"))?;
+    menu.ensure_required_actions();
     menu.validate()?;
     Ok(menu)
 }
 
 fn handle_menu_action(
     activate: On<Activate>,
-    actions: Query<&MenuAction>,
+    actions: Query<(Entity, &MenuAction)>,
+    mode: Res<State<AppMode>>,
     mut state: ResMut<MenuState>,
+    mut confirmation: ResMut<QuitConfirmationState>,
+    mut input_focus: ResMut<InputFocus>,
     mut virtual_time: ResMut<Time<Virtual>>,
     mut app_exit: MessageWriter<AppExit>,
 ) {
-    let Ok(action) = actions.get(activate.entity) else {
+    let Ok((_, action)) = actions.get(activate.entity) else {
         return;
     };
 
     match action.0.as_str() {
         "start" | "resume" => {
             state.visible = false;
+            input_focus.clear();
             virtual_time.unpause();
+        }
+        "quit" if *mode.get() == AppMode::Simulation => {
+            confirmation.visible = true;
+            confirmation.return_focus = Some(activate.entity);
+            if let Some((cancel, _)) = actions.iter().find(|(_, action)| action.0 == "quit_cancel") {
+                input_focus.set(cancel, FocusCause::Navigated);
+            }
         }
         "quit" => {
             app_exit.write(AppExit::Success);
         }
+        "quit_cancel" => {
+            confirmation.visible = false;
+            if let Some(previous) = confirmation.return_focus.take() {
+                input_focus.set(previous, FocusCause::Navigated);
+            } else {
+                input_focus.clear();
+            }
+        }
+        "quit_confirm" => {
+            app_exit.write(AppExit::Success);
+        }
         _ => unreachable!("menu actions are validated during asset loading"),
+    }
+}
+
+fn sync_quit_confirmation_visibility(
+    confirmation: Res<QuitConfirmationState>,
+    mut panels: Query<&mut Visibility, With<QuitConfirmationPanel>>,
+) {
+    for mut visibility in &mut panels {
+        visibility.set_if_neq(if confirmation.visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        });
+    }
+}
+
+fn sync_menu_feedback(
+    feedback: Res<MenuFeedback>,
+    mut notices: Query<
+        (&mut Text, &mut TextColor, &MenuNoticeColors),
+        With<MenuNotice>,
+    >,
+) {
+    if !feedback.is_changed() {
+        return;
+    }
+
+    for (mut text, mut text_color, colors) in &mut notices {
+        text.0.clone_from(&feedback.message);
+        text_color.0 = match feedback.tone {
+            MenuFeedbackTone::Notice => colors.notice,
+            MenuFeedbackTone::Success => colors.success,
+        };
+    }
+}
+
+fn scroll_position_after_delta(
+    current: f32,
+    delta: f32,
+    visible_height: f32,
+    content_height: f32,
+    inverse_scale_factor: f32,
+) -> f32 {
+    let max_offset = (content_height - visible_height).max(0.0) * inverse_scale_factor;
+    (current - delta).clamp(0.0, max_offset)
+}
+
+fn update_world_list_scroll(
+    mut mouse_wheel_reader: MessageReader<MouseWheel>,
+    hover_map: Res<HoverMap>,
+    mut scrollable: Query<(&mut ScrollPosition, &ComputedNode), With<WorldList>>,
+) {
+    for wheel in mouse_wheel_reader.read() {
+        let dy = match wheel.unit {
+            MouseScrollUnit::Line => wheel.y * 24.0,
+            MouseScrollUnit::Pixel => wheel.y,
+        };
+
+        for pointer_map in hover_map.values() {
+            for entity in pointer_map.keys() {
+                let Ok((mut position, computed)) = scrollable.get_mut(*entity) else {
+                    continue;
+                };
+                position.0.y = scroll_position_after_delta(
+                    position.0.y,
+                    dy,
+                    computed.size().y,
+                    computed.content_size().y,
+                    computed.inverse_scale_factor,
+                );
+            }
+        }
     }
 }
 
@@ -751,37 +1411,64 @@ fn toggle_menu_with_escape(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<State<AppMode>>,
     mut state: ResMut<MenuState>,
+    actions: Query<(Entity, &MenuAction)>,
+    mut confirmation: ResMut<QuitConfirmationState>,
+    mut input_focus: ResMut<InputFocus>,
     mut virtual_time: ResMut<Time<Virtual>>,
 ) {
-    if *mode.get() == AppMode::WorldLibrary || !keys.just_pressed(KeyCode::Escape) {
+    if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+
+    if confirmation.visible {
+        confirmation.visible = false;
+        if let Some(previous) = confirmation.return_focus.take() {
+            input_focus.set(previous, FocusCause::Navigated);
+        } else {
+            input_focus.clear();
+        }
+        return;
+    }
+
+    if *mode.get() == AppMode::WorldLibrary {
         return;
     }
 
     state.visible = !state.visible;
     if state.visible {
         virtual_time.pause();
+        if let Some((resume, _)) = actions.iter().find(|(_, action)| action.0 == "resume") {
+            input_focus.set(resume, FocusCause::Navigated);
+        }
     } else {
+        input_focus.clear();
         virtual_time.unpause();
     }
 }
 
 fn update_button_styles(
+    input_focus: Res<InputFocus>,
+    focus_visible: Res<InputFocusVisible>,
     mut buttons: Query<
         (
+            Entity,
             &Hovered,
             Has<Pressed>,
             &MenuButtonColors,
             &mut BackgroundColor,
+            &mut BorderColor,
         ),
         With<Button>,
     >,
 ) {
-    for (hovered, pressed, colors, mut background) in &mut buttons {
-        background.0 = if pressed || hovered.get() {
-            colors.hovered
+    for (entity, hovered, pressed, colors, mut background, mut border) in &mut buttons {
+        let active = pressed || hovered.get() || (focus_visible.0 && input_focus.get() == Some(entity));
+        background.0 = if active { colors.hovered } else { colors.normal };
+        *border = BorderColor::all(if active {
+            colors.border_active
         } else {
-            colors.normal
-        };
+            colors.border_normal
+        });
     }
 }
 
@@ -923,7 +1610,7 @@ mod tests {
         MenuAsset, MenuButtonDefinition, default_world_empty_description,
         default_world_format_label, default_world_metadata_max_fields, default_world_objects_label,
         default_world_preview_label, default_world_regions_label, default_world_version_prefix,
-        menu_visibility_targets, world_metadata_lines,
+        menu_visibility_targets, scroll_position_after_delta, world_metadata_lines,
     };
     use bevy::prelude::Visibility;
     use std::collections::BTreeMap;
@@ -933,6 +1620,21 @@ mod tests {
             schema_version: 1,
             title: "Title".to_owned(),
             subtitle: "Subtitle".to_owned(),
+            empty_library_title: default_empty_library_title(),
+            empty_library_hint: default_empty_library_hint(),
+            quit_confirm_title: default_quit_confirm_title(),
+            quit_confirm_message: default_quit_confirm_message(),
+            quit_confirm_label: default_quit_confirm_label(),
+            quit_cancel_label: default_quit_cancel_label(),
+            library_navigation_hint: default_library_navigation_hint(),
+            pause_controls_hint: default_pause_controls_hint(),
+            pause_title: default_pause_title(),
+            world_count_template: default_world_count_template(),
+            library_warning_template: default_library_warning_template(),
+            modal_backdrop_srgba: default_modal_backdrop_srgba(),
+            notice_srgba: default_notice_srgba(),
+            success_srgba: default_success_srgba(),
+            library_warning_srgba: default_library_warning_srgba(),
             background_srgba: [0.0, 0.0, 0.0, 1.0],
             panel_srgba: [0.1, 0.1, 0.1, 1.0],
             title_srgba: [1.0; 4],
@@ -940,6 +1642,14 @@ mod tests {
             button_srgba: [0.1, 0.1, 0.1, 1.0],
             button_hover_srgba: [0.2, 0.2, 0.2, 1.0],
             button_text_srgba: [1.0; 4],
+            panel_border_srgba: default_panel_border_srgba(),
+            panel_shadow_srgba: default_panel_shadow_srgba(),
+            panel_shadow_blur_px: default_panel_shadow_blur_px(),
+            panel_shadow_offset_y_px: default_panel_shadow_offset_y_px(),
+            button_border_srgba: default_button_border_srgba(),
+            button_active_border_srgba: default_button_active_border_srgba(),
+            danger_button_srgba: default_danger_button_srgba(),
+            danger_button_hover_srgba: default_danger_button_hover_srgba(),
             panel_width_px: 500.0,
             panel_padding_px: 32.0,
             vertical_gap_px: 12.0,
@@ -960,10 +1670,18 @@ mod tests {
             world_regions_label: default_world_regions_label(),
             world_objects_label: default_world_objects_label(),
             world_metadata_max_fields: default_world_metadata_max_fields(),
-            buttons: vec![MenuButtonDefinition {
-                label: "Start".to_owned(),
-                action: "start".to_owned(),
-            }],
+            panel_radius_px: default_panel_radius_px(),
+            card_radius_px: default_card_radius_px(),
+            buttons: vec![
+                MenuButtonDefinition {
+                    label: "Resume".to_owned(),
+                    action: "resume".to_owned(),
+                },
+                MenuButtonDefinition {
+                    label: "Quit".to_owned(),
+                    action: "quit".to_owned(),
+                },
+            ],
         }
     }
 
@@ -1015,11 +1733,30 @@ mod tests {
             "buttons": [{"label": "QUIT", "action": "quit"}]
         });
 
-        let menu: MenuAsset = serde_json::from_value(legacy).unwrap();
+        let mut menu: MenuAsset = serde_json::from_value(legacy).unwrap();
+        menu.ensure_required_actions();
         assert!(menu.validate().is_ok());
+        assert!(menu.buttons.iter().any(|button| button.action == "resume"));
         assert_eq!(menu.world_card_height_px, 116.0);
         assert_eq!(menu.world_preview_fallback_label, "WORLD");
         assert_eq!(menu.world_metadata_max_fields, 4);
+        assert_eq!(menu.empty_library_title, "YOUR WORLD LIBRARY IS EMPTY");
+        assert_eq!(menu.panel_radius_px, 18.0);
+        assert_eq!(menu.card_radius_px, 12.0);
+        assert_eq!(menu.panel_shadow_blur_px, 30.0);
+        assert_eq!(menu.panel_shadow_offset_y_px, 12.0);
+        assert_eq!(menu.quit_confirm_title, "UNSAVED SIMULATION");
+        assert_eq!(menu.quit_confirm_label, "QUIT ANYWAY");
+        assert_eq!(menu.quit_cancel_label, "KEEP PLAYING");
+        assert_eq!(menu.danger_button_srgba, [0.31, 0.075, 0.095, 1.0]);
+        assert_eq!(menu.library_navigation_hint, default_library_navigation_hint());
+        assert_eq!(menu.pause_title, "SIMULATION PAUSED");
+        assert_eq!(menu.world_count_template, "{count} WORLDS AVAILABLE");
+        assert_eq!(menu.modal_backdrop_srgba, default_modal_backdrop_srgba());
+        assert_eq!(menu.success_srgba, [0.28, 0.78, 0.65, 1.0]);
+        assert_eq!(menu.quit_confirm_title, "UNSAVED SIMULATION");
+        assert_eq!(menu.quit_cancel_label, "KEEP PLAYING");
+        assert_eq!(menu.danger_button_srgba, [0.31, 0.075, 0.095, 1.0]);
     }
 
     #[test]
@@ -1040,6 +1777,50 @@ mod tests {
             ]
         );
         assert_eq!(world_metadata_lines(&metadata, 1).len(), 1);
+    }
+
+    #[test]
+    fn scroll_position_clamps_to_content_and_respects_ui_scale() {
+        let next = scroll_position_after_delta(150.0, 80.0, 300.0, 1100.0, 0.5);
+        assert_eq!(next, 70.0);
+
+        let at_start = scroll_position_after_delta(0.0, 50.0, 300.0, 1100.0, 0.5);
+        assert_eq!(at_start, 0.0);
+
+        let at_end = scroll_position_after_delta(390.0, -50.0, 300.0, 1100.0, 0.5);
+        assert_eq!(at_end, 400.0);
+    }
+
+    #[test]
+    fn fallback_theme_is_valid_and_retains_essential_actions() {
+        let fallback = MenuAsset::fallback();
+        assert!(fallback.validate().is_ok());
+        assert!(fallback.buttons.iter().any(|button| button.action == "resume"));
+        assert!(fallback.buttons.iter().any(|button| button.action == "quit"));
+    }
+
+    #[test]
+    fn menu_theme_allows_flat_panels_and_disabled_shadows() {
+        let mut menu = valid_menu();
+        menu.panel_radius_px = 0.0;
+        menu.card_radius_px = 0.0;
+        menu.panel_shadow_blur_px = 0.0;
+        menu.panel_shadow_offset_y_px = 0.0;
+        assert!(menu.validate().is_ok());
+    }
+
+    #[test]
+    fn menu_asset_requires_unique_resume_and_quit_actions() {
+        let mut menu = valid_menu();
+        menu.buttons.pop();
+        assert!(menu.validate().is_err());
+
+        let mut menu = valid_menu();
+        menu.buttons.push(MenuButtonDefinition {
+            label: "Another quit".to_owned(),
+            action: "quit".to_owned(),
+        });
+        assert!(menu.validate().is_err());
     }
 
     #[test]
